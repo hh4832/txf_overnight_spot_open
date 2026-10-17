@@ -18,8 +18,9 @@ from .robustness import analyze
 from .trading_reference import trading_reference
 from .market_calendar_exceptions import reviewed_txf_closed_partition, reviewed_0050_suspension
 from .fubon_candle_dedup import reconcile_identical_candles
+from . import fetch_finlab_calendar as tx_calendar_source
 from .fetch_finlab_calendar import (
-    fetch as fetch_txf_calendar, validate_calendar, partition_activity,
+    validate_calendar, partition_activity,
     SOURCE as TX_CALENDAR_SOURCE, SOURCE_URL as TX_CALENDAR_URL,
     SCHEMA as TX_CALENDAR_SCHEMA,
 )
@@ -95,7 +96,7 @@ def run(cfg,root='outputs',cache_root=None,rest=None):
             calendar=cache.get('finlab_txf_calendar',dict(
                 start=calendar_start,end=calendar_end,
                 dataset=TX_CALENDAR_SOURCE,schema=TX_CALENDAR_SCHEMA),
-                lambda:fetch_txf_calendar(calendar_start,calendar_end))
+                lambda:tx_calendar_source.fetch(calendar_start,calendar_end))
             calendar=validate_calendar(calendar,calendar_start,calendar_end)
             observed_tx=calendar.loc[calendar.has_tx_activity,'date']
             if (observed_tx.min() > pd.Timestamp(cfg['start']).strftime('%Y-%m-%d') or
