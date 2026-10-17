@@ -1,9 +1,10 @@
 """Construct aligned market events without stale closes or cross-contract returns."""
 import numpy as np
 import pandas as pd
+from bisect import bisect_right
 
 from .session_alignment import TZ
-from .trading_calendar import next_spot_day, gap_flags
+from .trading_calendar import gap_flags
 from .data_validation import inspect_bars
 from .close_policy import choose_close, BOUNDARY
 from .expiry_calendar import expiry_contract_for_day, calendar_confidence
@@ -18,11 +19,14 @@ def build(bars, spot, cfg, return_diagnostics=False):
     empty_clean=clean.iloc[:0]
     empty_qa=qa.iloc[:0]
     spot=spot.set_index('date',verify_integrity=True)
+    spot_days=sorted(spot.index)
+    afterhours_days=sorted(set(clean.signal_date[clean.session=='afterhours']))
     events=[]
     for day in sorted(set(spot.index)|set(clean.signal_date)):
         if not (cfg['start']<=day<=cfg['end']):
             continue
-        nxt=next_spot_day(day,spot.index)
+        spot_pos=bisect_right(spot_days,day)
+        nxt=spot_days[spot_pos] if spot_pos<len(spot_days) else None
         regular=grouped.get((day,'regular'),empty_clean)
         night=grouped.get((day,'afterhours'),empty_clean)
         rq=qa_grouped.get((day,'regular'),empty_qa)
@@ -69,10 +73,8 @@ def build(bars, spot, cfg, return_diagnostics=False):
             if d.timestamp >= n.timestamp:
                 reasons.append('CLOSING_CLOCK_ORDER_INVALID')
         if nxt:
-            intervening=sorted(set(clean.signal_date[
-                (clean.session=='afterhours')&
-                (clean.signal_date>day)&(clean.signal_date<nxt)]))
-            if intervening:
+            night_pos=bisect_right(afterhours_days,day)
+            if night_pos<len(afterhours_days) and afterhours_days[night_pos]<nxt:
                 reasons.append('INTERVENING_NIGHT_SESSION_BEFORE_NEXT_SPOT')
             row['weekend_flag'],row['holiday_gap_flag']=gap_flags(day,nxt)
             if n is not None and n.timestamp>=pd.Timestamp(f'{nxt} 09:00',tz=TZ):

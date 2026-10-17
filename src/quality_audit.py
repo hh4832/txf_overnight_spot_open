@@ -160,7 +160,7 @@ def audit_events(raw_bars, spot, events, anomalies, cfg):
         day = ev['signal_trade_date']
         r = int(counts.get((day, 'regular'), 0))
         n = int(counts.get((day, 'afterhours'), 0))
-        expiring = verified_expiry_contract(day)
+        expiring = expiry_contract_for_day(day,cfg)
         expected_regular = (285 if expiring and str(ev.get('txf_day_contract_month')) == expiring
                             else NOMINAL_REGULAR_MINUTES)
         coverage.append({
