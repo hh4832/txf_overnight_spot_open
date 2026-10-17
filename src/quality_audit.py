@@ -221,7 +221,15 @@ def write_quality_report(run, events, anomalies, raw_bars, spot, cfg, info):
         frame.to_csv(run / 'tables' / f'{name}.csv', index=False)
     with pd.ExcelWriter(run / 'reports' / 'summary.xlsx') as writer:
         for name, frame in tables.items():
-            frame.to_excel(writer, sheet_name=name[:31], index=False)
+            # Excel has no timezone datatype. Encode ISO-8601 with explicit
+            # +08:00 offset only in the XLSX view; source/CSV/parquet remain
+            # timezone-aware and unchanged.
+            display = frame.copy()
+            for column in display.columns:
+                if isinstance(display[column].dtype, pd.DatetimeTZDtype):
+                    display[column] = display[column].map(
+                        lambda value: value.isoformat() if pd.notna(value) else '')
+            display.to_excel(writer, sheet_name=name[:31], index=False)
     valid = int((events.data_quality_status == 'VALID').sum()) if len(events) else 0
     failures = int((details.audit_status == 'MISMATCH').sum())
     report = (
