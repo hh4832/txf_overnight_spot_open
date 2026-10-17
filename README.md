@@ -232,3 +232,20 @@ available but are not claimed to demonstrate real-world trading value.
 remain in diagnostics, including adaptive boundary prices actually chosen.
 No look-ahead, synthetic fallback, cross-contract return, credential commit,
 minute-forward-fill or rewriting of previous run outputs is allowed.
+
+### FinLab 0050 historical gaps (v0.1.4 data-quality hotfix)
+
+Some FinLab dates can have all four fields missing for 0050
+(`etl:adj_open`, `etl:adj_close`, `price:開盤價`, `price:收盤價`).
+When **all four** fields are NaN on the same day, preserve the source
+date in the normalized cache as `fully_missing_0050=True`, then omit that
+day from the usable spot trading-session calendar. Write the exact date
+and ambiguity to `diagnostics/finlab_missing_dates.csv` and
+`run_info.json` (count and date list). The missing date is **not**
+affirmatively interpreted as an exchange holiday; if TXF trades that
+day, its event remains explicitly excluded for missing spot prices.
+If any field is missing *without* the other three missing, or if any
+observed price is invalid or the adjustment factors disagree, **fail
+closed**. No substitution, forward-fill, adjusted/raw mixing, changed
+factor tolerance, or fabricated trading sessions is permitted.
+This affects data-quality classification, not a trading result.

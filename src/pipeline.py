@@ -54,8 +54,23 @@ def run(cfg,root='outputs',cache_root=None,rest=None):
             end=min(pd.Timestamp(cfg['end'])+pd.Timedelta(days=14), last_complete).strftime('%Y-%m-%d')
             stage='FINLAB_FETCH'
             data_provider='finlab_0050'
-            spot=cache.get('finlab_0050',dict(start=cfg['start'],end=end,keys='adj_open_adj_close_raw_verify'),
+            spot=cache.get('finlab_0050',dict(start=cfg['start'],end=end,keys='adj_open_adj_close_raw_verify_v2'),
                            lambda:fetch_finlab(cfg['start'],end))
+            # Preserve all-source-missing dates as an explicit diagnostic, NOT
+            # as exchange-confirmed holidays or valid 0050 trading sessions.
+            # The normalized data is cached *before* excluding these rows.
+            missing_flag=(spot['fully_missing_0050'].fillna(False).astype(bool)
+                          if 'fully_missing_0050' in spot
+                          else pd.Series(False,index=spot.index))
+            missing_dates=spot.loc[missing_flag,['date']].copy()
+            missing_dates['reason']='ALL_FOUR_FINLAB_0050_PRICE_FIELDS_MISSING'
+            missing_dates['calendar_interpretation']='UNKNOWN_HOLIDAY_OR_PROVIDER_OMISSION'
+            missing_dates.to_csv(run_dir/'diagnostics/finlab_missing_dates.csv',index=False)
+            info['finlab_0050_fully_missing_count']=len(missing_dates)
+            info['finlab_0050_fully_missing_dates']=missing_dates['date'].tolist()
+            spot=spot.loc[~missing_flag].copy()
+            if spot.empty:
+                raise ValueError('No fully observed 0050 prices remain')
             stage='FUBON_LOGIN'
             data_provider='fubon_txf'
             if rest is None:

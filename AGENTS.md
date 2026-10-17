@@ -48,3 +48,9 @@ outside reviewed 2026 dates as SCHEDULED_UNVERIFIED; provide reviewed expiry
 overrides for exchange-shifted days. Report sample insufficiency and never
 label historical frequencies as signals or trading profit. Full multi-year
 runs require explicit confirm_full and real credentials.
+
+FinLab 0050 all-four-fields missing-date hotfix: flag such dates in raw
+normalized cache and emit exact date diagnostics in run_info and CSV; do not
+silently treat them as confirmed holidays. Never mask partial price NaNs,
+invalid prices, index disagreement, or factor mismatch. Keep adjusted price
+as the primary outcome. Existing historical output folders are immutable.
