@@ -6,11 +6,10 @@ from .contract_rollover import consistent
 from .returns import compute
 
 
-def build(bars, spot, cfg):
-    from .data_validation import validate_bars
-    mixed_dates = validate_bars(bars)
+def build(bars, spot, cfg, return_diagnostics=False):
+    from .data_validation import inspect_bars
+    bars, mixed_dates, bad_dates, qa = inspect_bars(bars, cfg['start'], cfg['end'])
     bars = bars[bars.volume > 0].copy()
-    bars['signal_date'] = [session_start(t,s) for t,s in zip(bars.timestamp,bars.session)]
     spot = spot.set_index('date', verify_integrity=True)
     events = []
     for day in sorted(set(spot.index) | set(bars.signal_date)):
@@ -27,6 +26,8 @@ def build(bars, spot, cfg):
         n = last_bar(night,endday,'05:00',cfg['max_close_staleness_minutes'])
         reasons = []
         if day in mixed_dates: reasons.append('WITHIN_SESSION_CONTRACT_CHANGE')
+        for code in sorted(bad_dates.get(day, [])):
+            reasons.append(code)
         if day not in spot.index: reasons.append('NO_SPOT_SESSION_D')
         if not nxt: reasons.append('NO_NEXT_SPOT_SESSION')
         if d is None: reasons.append('MISSING_OR_STALE_DAY_CLOSE')
@@ -63,4 +64,5 @@ def build(bars, spot, cfg):
                        data_quality_status='VALID')
         row['exclusion_reason'] = '|'.join(reasons)
         events.append(row)
-    return pd.DataFrame(events)
+    result = pd.DataFrame(events)
+    return (result, qa) if return_diagnostics else result

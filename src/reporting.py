@@ -27,11 +27,11 @@ def write(run,events,tables,info):
         ax.set_title(info['data_label']+' / '+table_name);ax.tick_params(axis='x',rotation=45)
         fig.tight_layout();fig.savefig(run/f'figures/{table_name}.png');plt.close(fig)
     exclusions=events.exclusion_reason.value_counts().to_dict()
-    text=f'''# TXF Overnight → 0050 Open v0.1.0
+    text=f'''# TXF Overnight → 0050 Open v0.1.1
 
 {info['data_label']}
 
-研究狀態：{info['status']}。LIVE_DATA_VALIDATION_PENDING。
+研究狀態：{info['status']}。{info['live_data_validation']}。
 研究判定：{info['research_decision']}。框架交付不代表完成真實研究。
 
 研究問題：H1 夜盤資訊是否傳至開盤跳空；H2 開盤後是否仍有增量資訊；H3 僅描述。

@@ -15,3 +15,11 @@ outputs/
 log/
 *.log
 .ipynb_checkpoints/
+
+# Never commit third-party wheel binaries or certificate exports.
+*.whl
+*.cer
+*.crt
+*.p7b
+*.p7c
+*.jks

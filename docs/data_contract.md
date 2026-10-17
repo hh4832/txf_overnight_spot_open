@@ -33,3 +33,17 @@ no fallback to synthetic data, no arbitrary SDK exception content. Cache hits ar
 Cache partition keys include date range, provider and parameter identity; successful cache
 is immutable. To revalidate revised vendor history use a new cache root, preserve old cache.
 Primary analysis rejects unknown contracts and adjustment factors; no back-adjusted futures.
+
+## v0.1.1 boundary QA clarification
+
+The source provider delivered a regular-session record labelled 2026-09-15
+13:45 Asia/Taipei. Its start/end candle semantics remain unverified. The
+primary 13:45 close therefore still uses the final verified 13:44 start-labelled
+one-minute bar; 13:45 is quarantined and, if within the configured signal
+window, the entire event is excluded. The same conservative policy applies to
+05:00 boundary records. This is NOT confirmation of a new official session end.
+
+Raw 14-day overfetch is retained without alteration; anomalies outside the
+requested signal dates are recorded in session_anomalies.csv but do not block
+unaffected events. Structural anomalies inside a signal event cause exclusion.
+This correction is pending revalidation on real historical data.

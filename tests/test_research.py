@@ -135,7 +135,11 @@ def test_zero_volume_close_not_valid(cfg):
 
 def test_duplicate_partition_rejected(cfg):
     bars,spot=generate()
-    with pytest.raises(ValueError):build(pd.concat([bars,bars.iloc[:1]]),spot,cfg)
+    day=spot.date.iloc[0]
+    events,qa=build(pd.concat([bars,bars.iloc[:1]]),spot,
+                    {**cfg,'start':day,'end':day},return_diagnostics=True)
+    assert 'DUPLICATE_TIMESTAMP' in events.iloc[0].exclusion_reason
+    assert len(qa)==2
 
 
 def test_adjustment_missing_excluded(cfg):
