@@ -25,6 +25,7 @@ from .fetch_finlab_calendar import (
     SCHEMA as TX_CALENDAR_SCHEMA,
 )
 from .reporting import write
+from .research_statistics import build_tables
 
 
 def run(cfg,root='outputs',cache_root=None,rest=None):
@@ -295,13 +296,7 @@ def run(cfg,root='outputs',cache_root=None,rest=None):
         else:
             if valid.empty: raise ValueError('No valid events; research blocked')
             stage='STATISTICS'
-            prob,bins=conditional(valid,cfg);annual,robust=analyze(valid,cfg);pred=oos(valid,cfg)
-            tables={'descriptive_statistics':valid[[X,*Y,'spot_total_return']].describe().reset_index(),
-                    'gap_regression':pd.DataFrame([regression(valid,Y[0],cfg)]),
-                    'intraday_regression':pd.DataFrame([regression(valid,Y[1],cfg)]),
-                    'conditional_probability':prob,'conditional_bins':bins,'annual_stability':annual,
-                    'out_of_sample_results':pred,'out_of_sample_scores':oos_scores(pred),'robustness_summary':robust}
-            tables.update(trading_reference(valid,cfg))
+            tables=build_tables(valid,cfg)
             info.update(status=('SMOKE_COMPLETE' if cfg['mode']=='smoke' else
                                 'DATA_PIPELINE_VALIDATED' if cfg['mode']=='pilot' else
                                 'LIVE_FRAMEWORK_RUN_COMPLETE'),

@@ -1,6 +1,23 @@
+import numpy as np
 import pandas as pd
 from statsmodels.stats.multitest import multipletests
 from .statistics import regression,X,Y
+
+
+def strict_boolean_mask(df, column):
+    """Accept bool-dtype or object-dtype genuine booleans; reject gaps/coercion.
+
+    In a mixed object column, Python's ~False is -1, not True.
+    Never treat numeric 0/1, strings or null as verified flags.
+    """
+    if column not in df.columns:
+        raise ValueError('Missing boolean research flag: ' + column)
+    series=df[column]
+    if series.isna().any() or not series.map(
+        lambda v: isinstance(v, (bool, np.bool_))
+    ).all():
+        raise ValueError('Invalid boolean research flag: ' + column)
+    return series.astype(bool)
 
 
 def analyze(df,cfg):
@@ -9,8 +26,11 @@ def analyze(df,cfg):
         annual.extend(dict(year=year,**regression(f,y,cfg)) for y in Y)
     prior_vol=df.spot_intraday_return.shift(1).rolling(20,min_periods=20).std()
     historical_median=prior_vol.shift(1).expanding(min_periods=20).median()
-    selections={'all':df,'exclude_weekend_holiday':df[~(df.weekend_flag|df.holiday_gap_flag)],
-                'exclude_corporate_action':df[~df.corporate_action_boundary],
+    weekend = strict_boolean_mask(df, 'weekend_flag')
+    holiday = strict_boolean_mask(df, 'holiday_gap_flag')
+    corporate = strict_boolean_mask(df, 'corporate_action_boundary')
+    selections={'all':df,'exclude_weekend_holiday':df.loc[~(weekend|holiday)],
+                'exclude_corporate_action':df.loc[~corporate],
                 'negative_overnight':df[df[X]<0],'positive_overnight':df[df[X]>0],
                 'exclude_extreme_5pct':df[df[X].abs()<=cfg['extreme_absolute_return']],
                 'high_prior_vol':df[prior_vol>historical_median],

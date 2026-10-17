@@ -373,3 +373,70 @@ stop. Existing adjusted-price, overnight/adaptive-close, expiry,
 cross-week duplicate and statistical definitions are unchanged.
 Restart Colab runtime and Run All for the latest code. Validate actual
 FinLab source completeness before interpreting full multi-year results.
+
+## Statistics-only Resume (fix for full-run STATISTICS_KEYERROR)
+
+The live 2018-01-01..2026-09-30 run at Git commit
+`89ab18d248dbb5a66b75f950973a8fca43cbd74e`
+reached 2,127 candidate events / 2,011 VALID events, then failed
+at `src/robustness.py` when Pandas `~` was applied to an object-dtype
+boolean flag. That causes integer -1 column selectors and a `KeyError`.
+This is a *software defect*, not evidence for/against H1, H2 or H3.
+
+This patch fixes the exact issue by validating the three relevant
+research flags (`weekend_flag`, `holiday_gap_flag`,
+`corporate_action_boundary`) and casting genuine booleans to bool
+before using `~`. Nulls, integer/string pseudo-boolean values and
+missing columns fail closed. The statistical functions and model
+parameters are unchanged. Shared `src/research_statistics.py` is
+called by BOTH the full data run and statistics-only resume.
+
+**Resume in Google Colab without re-downloading 2.4 million minute
+candles:**
+
+1. Open the same GitHub [Colab runner](https://colab.research.google.com/github/hh4832/txf_overnight_spot_open/blob/main/notebooks/run_txf_overnight_spot_open.ipynb).
+2. Set `MODE = 'resume_statistics'`. For this exact failure, the
+   notebook already provides the source Drive folder ID
+   `1ouocV-NPdL9-cH14ORbRpDTabCPVqSTc` and source commit
+   `89ab18d248dbb5a66b75f950973a8fca43cbd74e`.
+   For another failure, update BOTH IDs explicitly. This is not
+   a fallback for missing data or bad research signals.
+3. Restart the runtime, then Run All. Resume needs Google Drive access
+   and the repository clone, **not FinLab/Fubon credentials, wheel or
+   Fubon API network requests**.
+4. The runner validates the exact Drive parent/folder IDs; downloads
+   only the archived `run_info.json`, `config/research.json`,
+   `processed/event_dataset.parquet`, and `raw_manifest/manifest.json`
+   and checks matching Git source SHA, ancestor, failed STATISTICS stage,
+   mode, schema, counts, bool flags, adjusted-return multiplicative
+   identity, and source file hashes. Original source provider SHA
+   manifest is copied for provenance; raw candle checksums are NOT
+   recomputed.
+5. New timestamped results go under `runs/` with a different current
+   commit SHA, then upload to the verified Google Drive folder.
+   Original failed run and immutable source caches remain unchanged.
+
+The new `run_info.json` and `reports/resume_provenance.md` contain
+the original run name/Git commit, statistics Git commit, original
+event_dataset/config/manifest SHA256, source status and explicit
+`SOURCE_EVENT_QA_NOT_REEXECUTED` warning. The untouched original
+Parquet file is archived separately under
+`raw_manifest/source_event_dataset.parquet` to make SHA comparison
+reproducible. Reports and five diagnostic figures use the original
+`src/reporting.py` generator. The original event classification
+is reused; price, contract, minute-bar, session-date quality audit is
+NOT rerun by statistics-only resume. It is not independent replication
+or execution-PnL validation.
+
+CLI (Git repository Python 3.11 environment already prepared):
+```bash
+python -m src.resume_statistics \
+  --source-run /path/to/archived/20261017_222715_89ab18d248_023e11 \
+  --expected-source-sha 89ab18d248dbb5a66b75f950973a8fca43cbd74e \
+  --output outputs
+```
+
+This change solves the observed flag bug and enables resume. Any
+additional statistics/reporting failure remains fail-closed and is
+diagnosed independently. Earlier financial performance numbers are
+NOT estimated or invented.

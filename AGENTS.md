@@ -83,3 +83,14 @@ Fail closed on source conflicts, stale/invalid calendar data, and
 unexpected vendor empties. Cache the calendar with SHA256; log source
 and each skip in alignment CSV, manifest and run_info. Preserve
 previous research outputs and never adjust Fubon session timestamps.
+
+Stats-only resume: accept only a FAILED live run with error_stage=STATISTICS
+and exact original Git SHA; verify all four archived inputs, event schema,
+true boolean flags (reject null/0/1/string), valid counts, chronological
+dates, multiplicative return identity, and source Git ancestry. Reuse the
+identical full-pipeline statistics generator; no changing threshold or
+selection rules. Never repeat the FinLab/Fubon requests, never overwrite
+past runs/cache, never claim raw bar QA was rerun. Save original dataset
+SHA256, source manifest SHA256, old and new commit SHAs and the exact
+archived source event Parquet in a newly timestamped run. On failure stop
+and report sanitized diagnostics; no silent fallback.

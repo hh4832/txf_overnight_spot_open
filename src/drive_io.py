@@ -51,3 +51,60 @@ def verified_cache_root(service,folder_id,mount_root):
     path=Path(mount_root).joinpath(*reversed(parts))
     if not path.is_dir(): raise ValueError('Verified Drive folder not present in mount')
     return path/'cache'
+
+
+def download_statistics_resume_source(service, parent_folder_id, source_run_id, destination):
+    """Fetch exactly four immutable files from one verified Drive run folder.
+
+    Reads by Google Drive file ID and verified parents, never by guessed
+    names/mount paths. No overwrites, no shared credentials or vendor API.
+    """
+    import re
+    from googleapiclient.http import MediaIoBaseDownload
+
+    validate_folder(service, parent_folder_id)
+    if not isinstance(source_run_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{10,128}',source_run_id):
+        raise ValueError('Invalid source run folder ID')
+    meta=service.files().get(
+        fileId=source_run_id,fields='id,name,mimeType,parents,trashed').execute()
+    if (meta.get('trashed') or meta.get('mimeType')!='application/vnd.google-apps.folder'
+            or meta.get('parents')!=[parent_folder_id]
+            or not re.fullmatch(r'[0-9]{8}_[0-9]{6}_[a-f0-9]{10}_[a-f0-9]{6}',meta.get('name',''))):
+        raise ValueError('Source run folder ID, name or parent is not verified')
+    root=Path(destination)/meta['name']
+    root.mkdir(parents=True,exist_ok=False)
+
+    def child(folder_id,name,required_type):
+        q=f"'{folder_id}' in parents and trashed = false and name = '{name}'"
+        res=service.files().list(
+            q=q,pageSize=1000,fields='nextPageToken,files(id,name,mimeType,parents,trashed,size)').execute()
+        items=res.get('files',[])
+        if (res.get('nextPageToken') or len(items)!=1 or
+                (items[0].get('mimeType')!=required_type if required_type else
+                 items[0].get('mimeType','').startswith('application/vnd.google-apps.')) or
+                items[0].get('parents')!=[folder_id]):
+            raise ValueError('Source run file missing, duplicated, or wrong type')
+        return items[0]
+
+    folder='application/vnd.google-apps.folder'
+    for directory,filenames in (
+        ('',('run_info.json',)),
+        ('config',('research.json',)),
+        ('processed',('event_dataset.parquet',)),
+        ('raw_manifest',('manifest.json',)),
+    ):
+        current=source_run_id if not directory else child(
+            source_run_id,directory,folder)['id']
+        dest_dir=root if not directory else root/directory
+        dest_dir.mkdir(exist_ok=True)
+        for filename in filenames:
+            item=child(current,filename,None)
+            if int(item.get('size',0)) > 50_000_000:
+                raise ValueError('Source archive exceeds bounded safe input size')
+            with (dest_dir/filename).open('xb') as stream:
+                request=service.files().get_media(fileId=item['id'])
+                download=MediaIoBaseDownload(stream,request)
+                done=False
+                while not done:
+                    _,done=download.next_chunk()
+    return root
