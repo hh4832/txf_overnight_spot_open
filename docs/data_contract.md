@@ -73,3 +73,28 @@ exclusion reason tables. QA status PASS/REVIEW_REQUIRED/BLOCKED is never
 a finding about predictive ability, market impact or trading profitability.
 No inferential statistics run in this mode. The original v0.1.1 pilot
 and v0.1.0 formal hypotheses/returns remain unchanged.
+
+## v0.1.3: expiry and boundary policy
+
+The TXF monthly expiring contract's regular-session ending timestamp is 13:30,
+represented by its 13:29 start-labelled one-minute bar; it has no
+afterhours session. This is contract-dependent: non-expiring months trading
+on the same date remain on the normal 13:45 clock. Explicit verified
+2026 expiration pairs: 202607/2026-07-15, 202608/2026-08-19,
+202609/2026-09-16. Unverified historical third-Wednesday dates are not
+automatically assumed to be the official schedule.
+
+For 13:45 regular / 05:00 afterhours boundary records, the default action
+remains event exclusion with a detailed marker audit. Opt-in is permitted
+only after independent documentation plus a strict zero-volume flat marker
+equal to the last documented start-labelled closing candle of the same
+YYYYMM contract. A different price/positive volume is never permitted.
+Record warnings and source anomalies independently from signal validity.
+All research formulas remain unchanged.
+
+New tables: boundary_audit.csv, missing_minute_intervals.csv,
+classification_comparison.csv. The latter reproduces the prior classification
+rule INFERRED_FROM_V012_RULES_NOT_ARCHIVED_RUN; it is not the saved v0.1.2 output.
+Nominal minute counts are 285 for verified expiring contracts' regular
+session and 300 for other regular sessions, 840 for afterhours; nonobserved
+labels are not proof of missing transactions. Never fill prices.

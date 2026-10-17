@@ -27,3 +27,14 @@ EXCLUDED event and each provider anomaly for review. Never hide an audit
 mismatch behind a success label; never mislabel synthetic fixtures as live.
 Nominal 300/840 minute counts are descriptive, not proof of a trading outage.
 Use new run folders and checksum-checked cache; preserve existing raw data.
+
+v0.1.3: Exchange-verified 2026 monthly TXF expiry dates are explicit;
+the expiring contract's 13:29 start-labelled last minute is distinct from
+normal 13:44, and no expiring-month night session exists. NEVER mix 202607
+13:29 with 202608 04:59 as an overnight return. Boundary records are preserved
+and audit-visible; default boundary status remains unresolved/excluded. An
+explicitly documented non-price marker can be ignored only with flat zero
+volume, identical OHLC/selected close, same contract and reviewed evidence.
+Keep provider anomalies and warning history even for retained events.
+Missing minute intervals are unobserved timestamps, not proven API loss;
+do not fill. v0.1.2 status comparisons are inferred, not archived runs.

@@ -1,4 +1,4 @@
-version: 0.1.2
+version: 0.1.3
 start: '2026-09-01'
 end: '2026-09-07'
 mode: smoke
@@ -12,5 +12,8 @@ request_spacing_seconds: 1.1
 max_close_staleness_minutes: 5
 confirm_full: false
 validation_max_calendar_days: 100
+# No event restoration until vendor timestamp semantics are independently verified.
+boundary_semantics_verified: false
+boundary_evidence_reference: ''
 extreme_absolute_return: 0.05
 # Research sensitivity definition, not a fitted trading threshold.

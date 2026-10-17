@@ -12,6 +12,9 @@ import pandas as pd
 
 from .data_validation import inspect_bars
 from .session_alignment import last_bar
+from .expiry_calendar import select_verified_day_close, expected_regular_bars, verified_expiry_contract
+from .boundary_policy import decide_boundaries
+from .minute_gaps import missing_minute_intervals
 from .trading_calendar import next_spot_day
 from .returns import compute
 
@@ -49,13 +52,16 @@ def audit_events(raw_bars, spot, events, anomalies, cfg):
         regular = traded[(traded.signal_date == day) & (traded.session == 'regular')]
         night = traded[(traded.signal_date == day) & (traded.session == 'afterhours')]
         night_end = (pd.Timestamp(day) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-        dbar = last_bar(regular, day, '13:45', cfg['max_close_staleness_minutes'])
+        dbar = select_verified_day_close(regular, day, cfg['max_close_staleness_minutes'])
         nbar = last_bar(night, night_end, '05:00', cfg['max_close_staleness_minutes'])
         issues = []
         if ev['next_spot_trade_date'] != nxt:
             issues.append('NEXT_SPOT_DATE_MISMATCH')
         valid = ev['data_quality_status'] == 'VALID'
         if valid:
+            if (dbar is not None and verified_expiry_contract(day) ==
+                    str(dbar.contract_month)):
+                issues.append('EXPIRY_CONTRACT_NOT_EXCLUDED')
             if dbar is None or nbar is None or not nxt or day not in spot_by_date.index:
                 issues.append('SOURCE_CLOSING_BAR_OR_SPOT_MISSING')
             else:
@@ -144,11 +150,17 @@ def audit_events(raw_bars, spot, events, anomalies, cfg):
         day = ev['signal_trade_date']
         r = int(counts.get((day, 'regular'), 0))
         n = int(counts.get((day, 'afterhours'), 0))
+        expiring = verified_expiry_contract(day)
+        expected_regular = (285 if expiring and str(ev.get('txf_day_contract_month')) == expiring
+                            else NOMINAL_REGULAR_MINUTES)
         coverage.append({
             'signal_trade_date': day,
+            'expiry_day_flag': bool(expiring),
+            'expiry_contract_month': expiring,
+            'boundary_warning_codes': ev.get('boundary_warning_codes',''),
             'regular_observed_bars': r,
-            'regular_nominal_bars': NOMINAL_REGULAR_MINUTES,
-            'regular_nominal_coverage': r / NOMINAL_REGULAR_MINUTES,
+            'regular_nominal_bars': expected_regular,
+            'regular_nominal_coverage': r / expected_regular,
             'afterhours_observed_bars': n,
             'afterhours_nominal_bars': NOMINAL_AFTERHOURS_MINUTES,
             'afterhours_nominal_coverage': n / NOMINAL_AFTERHOURS_MINUTES,
@@ -162,7 +174,8 @@ def audit_events(raw_bars, spot, events, anomalies, cfg):
             'rollover_flag': bool(ev['rollover_flag']),
         })
     daily = pd.DataFrame(coverage, columns=[
-        'signal_trade_date', 'regular_observed_bars', 'regular_nominal_bars',
+        'signal_trade_date', 'expiry_day_flag', 'expiry_contract_month',
+        'boundary_warning_codes', 'regular_observed_bars', 'regular_nominal_bars',
         'regular_nominal_coverage', 'afterhours_observed_bars',
         'afterhours_nominal_bars', 'afterhours_nominal_coverage',
         'regular_zero_volume', 'afterhours_zero_volume', 'raw_anomalies_in_scope',
@@ -182,13 +195,16 @@ def audit_events(raw_bars, spot, events, anomalies, cfg):
                 'contract_rollover_events': int(f.rollover_flag.sum()),
                 'weekend_flags': int(f.weekend_flag.sum()),
                 'holiday_gap_flags': int(f.holiday_gap_flag.sum()),
+                'expiry_day_events': int(f.expiry_day_flag.sum()),
+                'boundary_warning_events': int(f.boundary_warning_codes.astype(str).ne('').sum()),
                 'mean_regular_nominal_coverage': f.regular_nominal_coverage.mean(),
                 'mean_afterhours_nominal_coverage': f.afterhours_nominal_coverage.mean(),
             })
     monthly = pd.DataFrame(monthly_rows, columns=[
         'month', 'candidate_events', 'valid_events', 'excluded_events',
         'audit_mismatches', 'raw_anomalies_in_scope', 'contract_rollover_events',
-        'weekend_flags', 'holiday_gap_flags', 'mean_regular_nominal_coverage',
+        'weekend_flags', 'holiday_gap_flags', 'expiry_day_events',
+        'boundary_warning_events', 'mean_regular_nominal_coverage',
         'mean_afterhours_nominal_coverage'])
     reasons = Counter()
     for val in events.get('exclusion_reason', pd.Series(dtype=str)).fillna(''):
@@ -215,8 +231,59 @@ def write_quality_report(run, events, anomalies, raw_bars, spot, cfg, info):
     run = Path(run)
     details, daily, monthly, reasons, audit_status = audit_events(
         raw_bars, spot, events, anomalies, cfg)
+    # Independent source-marker audit, including the selected verified
+    # close and explicit evidence status. Do not silently restore an event.
+    clean, _, _, _ = inspect_bars(raw_bars, cfg['start'], cfg['end'])
+    positive = clean[clean.volume > 0]
+    markers = []
+    for _, event in events.iterrows():
+        day = event.signal_trade_date
+        reg = positive[(positive.signal_date==day)&(positive.session=='regular')]
+        night = positive[(positive.signal_date==day)&(positive.session=='afterhours')]
+        dbar=select_verified_day_close(reg,day,cfg['max_close_staleness_minutes'])
+        nextday=(pd.Timestamp(day)+pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+        nbar=last_bar(night,nextday,'05:00',cfg['max_close_staleness_minutes'])
+        _, _, rows = decide_boundaries(anomalies, day, dbar, nbar, cfg)
+        markers.extend(rows)
+    marker_columns = [
+        'signal_trade_date','marker_timestamp','session','contract_month',
+        'anomaly_code','marker_open','marker_high','marker_low','marker_close',
+        'marker_volume','selected_close_timestamp','selected_close',
+        'price_difference','documentary_evidence','decision']
+    markers = pd.DataFrame(markers,columns=marker_columns)
+    gaps = missing_minute_intervals(raw_bars,events,cfg)
+    # Rule-based reproduction of the *previous* v0.1.3 classification:
+    # for expiry at 13:30, old policy reported MISSING_OR_STALE_DAY_CLOSE.
+    # Do not imply these are archived v0.1.2 output records.
+    versions=[]
+    for _, event in events.iterrows():
+        old = event.data_quality_status
+        old_reason = str(event.exclusion_reason or '')
+        expiry_only = ('EXPIRY_CONTRACT_ROLLOVER_EXCLUSION' in old_reason and
+                       pd.notna(event.get('txf_day_close_timestamp', pd.NaT)))
+        if expiry_only:
+            old='EXCLUDED'
+            old_reason='MISSING_OR_STALE_DAY_CLOSE'
+        if event.get('boundary_warning_codes',''):
+            old='EXCLUDED'
+            old_reason=str(event.get('boundary_warning_codes'))
+        versions.append({
+            'signal_trade_date':event.signal_trade_date,
+            'v012_status_inferred':old,
+            'v012_exclusion_inferred':old_reason,
+            'v013_status':event.data_quality_status,
+            'v013_exclusion':event.exclusion_reason,
+            'classification_changed':old != event.data_quality_status or
+                                      old_reason != event.exclusion_reason,
+            'basis':'INFERRED_FROM_V012_RULES_NOT_ARCHIVED_RUN',
+        })
+    comparison = pd.DataFrame(versions,columns=[
+        'signal_trade_date','v012_status_inferred','v012_exclusion_inferred',
+        'v013_status','v013_exclusion','classification_changed','basis'])
     tables = {'event_price_audit': details, 'daily_coverage': daily,
-              'monthly_qa': monthly, 'exclusion_reasons': reasons}
+              'monthly_qa': monthly, 'exclusion_reasons': reasons,
+              'boundary_audit': markers, 'missing_minute_intervals': gaps,
+              'classification_comparison': comparison}
     for name, frame in tables.items():
         frame.to_csv(run / 'tables' / f'{name}.csv', index=False)
     with pd.ExcelWriter(run / 'reports' / 'summary.xlsx') as writer:
@@ -245,13 +312,16 @@ def write_quality_report(run, events, anomalies, raw_bars, spot, cfg, info):
         f"overfetch anomalous raw bars: {int((~anomalies.affects_research_event).sum()) if len(anomalies) else 0}.\n\n"
         'All valid events are independently recomputed from preserved provider '
         'records and adjusted ETF observations, with strict clock and contract checks.\n\n'
-        'Nominal daily minute counts (300 regular, 840 afterhours) are '
-        'informational, not proof of exchange outages or invalidity. '
-        'Boundary bar labeling remains a provider-semantic assumption pending external verification.\n\n'
+        'Expected regular minute count: 300 normally; 285 for the verified '
+        'expiring contract on its last trading day, which has no afterhours. '
+        'Missing timestamps are not proof of vendor data loss. '
+        'Boundary marker interpretation remains unverified without independent '
+        'documentation and zero-volume flat marker checks.\n\n'
         '**No H1/H2/H3 inference, HAC, FDR, OOS, p-values or trading conclusions '
         'are produced in validation mode.**\n\n'
         'Detailed rows: tables/event_price_audit.csv, daily_coverage.csv, '
-        'monthly_qa.csv, exclusion_reasons.csv; '
+        'monthly_qa.csv, exclusion_reasons.csv, boundary_audit.csv, '
+        'missing_minute_intervals.csv, classification_comparison.csv; '
         'diagnostics/session_anomalies.csv; raw_manifest/manifest.json.\n'
     )
     (run / 'reports' / 'data_quality_audit.md').write_text(report, encoding='utf-8')

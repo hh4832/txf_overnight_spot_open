@@ -52,7 +52,8 @@ def inspect_bars(bars, start, end):
     else:
         anomaly['affects_research_event'] = pd.Series(dtype=bool)
         anomaly['decision'] = pd.Series(dtype=str)
-    qa_cols = ['timestamp', 'session', 'contract_month', 'anomaly_code',
+    qa_cols = ['timestamp', 'session', 'contract_month', 'open', 'high',
+               'low', 'close', 'volume', 'anomaly_code',
                'signal_date', 'affects_research_event', 'decision']
     qa = anomaly[qa_cols].rename(columns={'anomaly_code': 'anomaly_type',
                                           'signal_date': 'signal_trade_date'})

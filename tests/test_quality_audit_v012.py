@@ -89,7 +89,7 @@ def test_report_has_no_statistical_claims(tmp_path):
     assert (tmp_path/'reports/summary.xlsx').exists()
     display = pd.read_excel(tmp_path/'reports/summary.xlsx',sheet_name='event_price_audit')
     assert '+08:00' in display.loc[0,'day_bar_timestamp']
-    assert len(tables) == 4
+    assert len(tables) == 7
 
 
 def test_empty_sample_requests_review():

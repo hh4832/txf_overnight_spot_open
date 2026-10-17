@@ -27,7 +27,7 @@ def write(run,events,tables,info):
         ax.set_title(info['data_label']+' / '+table_name);ax.tick_params(axis='x',rotation=45)
         fig.tight_layout();fig.savefig(run/f'figures/{table_name}.png');plt.close(fig)
     exclusions=events.exclusion_reason.value_counts().to_dict()
-    text=f'''# TXF Overnight → 0050 Open v0.1.1
+    text=f'''# TXF Overnight → 0050 Open v0.1.3
 
 {info['data_label']}
 

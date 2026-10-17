@@ -17,6 +17,10 @@ def load(path='configs/research.yaml', **overrides):
         raise ValueError('Validation limited to configured calendar-day window')
     if cfg['mode'] == 'full' and not cfg['confirm_full']:
         raise ValueError('Full download requires confirm_full=true')
+    if cfg.get('boundary_semantics_verified', False):
+        evidence = str(cfg.get('boundary_evidence_reference', '')).strip()
+        if not (evidence.startswith('https://') and len(evidence) > 16):
+            raise ValueError('Boundary marker verification requires reviewed HTTPS evidence')
     if cfg['request_spacing_seconds'] < 0:
         raise ValueError('Invalid rate limit')
     return cfg

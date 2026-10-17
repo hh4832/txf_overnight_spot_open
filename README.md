@@ -1,4 +1,4 @@
-# TXF Overnight → Next-Day Spot Open v0.1.2
+# TXF Overnight → Next-Day Spot Open v0.1.3
 
 研究框架，沒有下單功能。`FRAMEWORK_COMPLETE` 為無憑證測試通過後的框架交付狀態，非真實研究完成。`LIVE_DATA_VALIDATION_PENDING`。
 
@@ -117,3 +117,63 @@ The validation phase can be re-run without downloading identical cached
 partitions. Real-data access still requires the user's authorized private
 Fubon and FinLab credentials. Successful CI synthetic tests do not verify
 2026-07-01..2026-09-30 live market coverage.
+
+## v0.1.3 — Strict expiry and boundary classification correction
+
+**No market hypothesis or return formula changed.** All old cache partitions,
+research run folders, secrets and raw data remain untouched. Validation mode
+is bounded to at most 100 calendar-day difference; formal `full` still requires
+explicit confirmation.
+
+Exchange-verified TXF **expiring-month** contracts end the last regular
+session at 13:30 and have NO afterhours on expiry day. Explicitly reviewed
+monthly expiries for this QA: 2026-07-15 (202607), 2026-08-19 (202608),
+2026-09-16 (202609). The next month's futures contract can trade its
+normal 13:45 regular session on that same date. **Never divide two different
+contract months to produce the overnight signal.** A 13:29 close of
+the expiring contract is recorded but classified
+`EXPIRY_CONTRACT_ROLLOVER_EXCLUSION`, not a generic missing 13:44.
+
+13:45 regular and 05:00 afterhours records are preserved in raw cache
+and `session_anomalies.csv`. By default, their timestamp semantics are
+**UNVERIFIED** and affected events remain excluded. An individually inspected
+event may only be restored with a reviewed HTTPS document specified in
+`boundary_evidence_reference`, `boundary_semantics_verified: true`,
+and a zero-volume flat OHLC marker **identical to the verified
+same-contract closing bar**. Any positive volume, conflicting OHLC,
+contract mismatch or missing bar excludes the event regardless of
+configuration. This mechanism does not independently prove vendor
+timestamp semantics; review the evidence before opt-in. Recovered events
+remain visible as warnings and result in `REVIEW_REQUIRED` QA.
+
+New validation tables:
+
+- `boundary_audit.csv`: original marker OHLC, volume, selected closing
+  bar and difference, whether independently documented evidence was provided;
+- `missing_minute_intervals.csv`: consecutive unobserved minute timestamps,
+  duration, session, contract context and minutes to close; no price filling;
+- `classification_comparison.csv`: per-signal status and exclusion
+  compared to the *inferred v0.1.2 rule*. This is NOT an archived
+  historical run and must not be confused with a bitwise replay.
+- Existing daily/monthly audit reports now distinguish 285 expected
+  regular minutes for the expiring contract versus usual 300.
+  Missing timestamps do not establish whether the exchange had no
+  trades or the provider omitted candles.
+
+Run Phase B using an updated Colab Runtime, set:
+
+```python
+MODE = "validation"
+START = "2026-07-01"
+END = "2026-09-30"
+CONFIRM_FULL = False
+```
+
+Official exchange contract specification:
+https://www.taifex.com.tw/cht/2/tX?menuid1=12
+
+Official monthly final settlements:
+https://www.taifex.com.tw/cht/5/futIndxFSP
+
+CI synthetic tests validate code behavior only. They do not replace a real
+Colab validation or independently verify vendor timestamps.

@@ -4,6 +4,8 @@ from .session_alignment import session_start, last_bar
 from .trading_calendar import next_spot_day, gap_flags
 from .contract_rollover import consistent
 from .returns import compute
+from .expiry_calendar import verified_expiry_contract, is_verified_expiring_contract, select_verified_day_close
+from .boundary_policy import decide_boundaries, BOUNDARY_CODES
 
 
 def build(bars, spot, cfg, return_diagnostics=False):
@@ -17,20 +19,34 @@ def build(bars, spot, cfg, return_diagnostics=False):
             continue
         row = dict(signal_trade_date=day, next_spot_trade_date=next_spot_day(day,spot.index),
                    data_quality_status='EXCLUDED', exclusion_reason='', rollover_flag=False,
-                   weekend_flag=False, holiday_gap_flag=False)
+                   weekend_flag=False, holiday_gap_flag=False,
+                   expiry_day_flag=False, expiry_contract_month=None,
+                   boundary_warning_codes='')
         nxt = row['next_spot_trade_date']
         regular = bars[(bars.signal_date==day)&(bars.session=='regular')]
         night = bars[(bars.signal_date==day)&(bars.session=='afterhours')]
-        d = last_bar(regular,day,'13:45',cfg['max_close_staleness_minutes'])
+        expiry_month = verified_expiry_contract(day)
+        row['expiry_day_flag'] = bool(expiry_month)
+        row['expiry_contract_month'] = expiry_month
+        d = select_verified_day_close(regular,day,cfg['max_close_staleness_minutes'])
         endday = (pd.Timestamp(day)+pd.Timedelta(days=1)).strftime('%Y-%m-%d')
         n = last_bar(night,endday,'05:00',cfg['max_close_staleness_minutes'])
         reasons = []
         if day in mixed_dates: reasons.append('WITHIN_SESSION_CONTRACT_CHANGE')
+        boundary_exclusions, boundary_warnings, _boundary_details = decide_boundaries(
+            qa, day, d, n, cfg)
+        row['boundary_warning_codes'] = '|'.join(sorted(set(boundary_warnings)))
         for code in sorted(bad_dates.get(day, [])):
-            reasons.append(code)
+            if code not in BOUNDARY_CODES:
+                reasons.append(code)
+        reasons.extend(sorted(set(boundary_exclusions)))
         if day not in spot.index: reasons.append('NO_SPOT_SESSION_D')
         if not nxt: reasons.append('NO_NEXT_SPOT_SESSION')
         if d is None: reasons.append('MISSING_OR_STALE_DAY_CLOSE')
+        if d is not None and expiry_month and str(d.contract_month) == expiry_month:
+            # The original expiring instrument cannot supply a normal
+            # 13:45 close or any same-contract 15:00-05:00 night session.
+            reasons.append('EXPIRY_CONTRACT_ROLLOVER_EXCLUSION')
         if n is None: reasons.append('MISSING_OR_STALE_NIGHT_CLOSE')
         for label,bar in [('day',d),('night',n)]:
             row[f'txf_{label}_close_timestamp'] = bar.timestamp if bar is not None else pd.NaT
@@ -38,7 +54,8 @@ def build(bars, spot, cfg, return_diagnostics=False):
             row[f'txf_{label}_close'] = bar.close if bar is not None else np.nan
         if d is not None and n is not None:
             row['rollover_flag'] = not consistent(d.contract_month,n.contract_month)
-            if row['rollover_flag']: reasons.append('CONTRACT_MISMATCH')
+            if row['rollover_flag'] and 'EXPIRY_CONTRACT_ROLLOVER_EXCLUSION' not in reasons:
+                reasons.append('CONTRACT_MISMATCH')
         if nxt:
             intervening = sorted(set(bars.signal_date[(bars.session=='afterhours') & (bars.signal_date>day) & (bars.signal_date<nxt)]))
             if intervening: reasons.append('INTERVENING_NIGHT_SESSION_BEFORE_NEXT_SPOT')
@@ -62,7 +79,7 @@ def build(bars, spot, cfg, return_diagnostics=False):
             row.update(overnight_negative=row['txf_overnight_return']<0,
                        gap_negative=row['spot_opening_gap']<0,intraday_negative=row['spot_intraday_return']<0,
                        data_quality_status='VALID')
-        row['exclusion_reason'] = '|'.join(reasons)
+        row['exclusion_reason'] = '|'.join(sorted(set(reasons)))
         events.append(row)
     result = pd.DataFrame(events)
     return (result, qa) if return_diagnostics else result
