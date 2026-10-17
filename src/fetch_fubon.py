@@ -2,6 +2,7 @@
 import time
 import re
 import pandas as pd
+from .fubon_candle_dedup import reconcile_identical_candles
 
 
 def normalize(response, session):
@@ -27,9 +28,12 @@ def normalize(response, session):
     if ((df.low > df[['open','close']].min(axis=1)) | (df.high < df[['open','close']].max(axis=1))).any():
         raise ValueError('OHLC ordering invalid')
     df['session'] = session
-    if df.timestamp.duplicated().any():
-        raise ValueError('Duplicate timestamp')
-    return df.sort_values('timestamp').reset_index(drop=True)
+    # Same-timestamp identical rows from a provider are harmless duplicates,
+    # but any contract/session/OHLCV conflict remains fatal.
+    df, duplicate_audit = reconcile_identical_candles(df)
+    df = df.sort_values('timestamp').reset_index(drop=True)
+    df.attrs['fubon_duplicate_audit'] = duplicate_audit
+    return df
 
 
 def fetch(rest, start, end, spacing=1.1):
@@ -46,4 +50,15 @@ def fetch(rest, start, end, spacing=1.1):
         finally:
             time.sleep(spacing)
         frames.append(normalize(response, session))
-    return pd.concat(frames, ignore_index=True)
+    raw_rows = sum(p.attrs['fubon_duplicate_audit']['rows_before'] for p in frames)
+    combined, extra = reconcile_identical_candles(pd.concat(frames, ignore_index=True))
+    combined.attrs['fubon_duplicate_audit'] = {
+        'raw_rows': int(raw_rows),
+        'stored_rows': int(len(combined)),
+        'within_fetch_duplicates_removed': int(raw_rows-len(combined)),
+        'duplicated_timestamp_groups': int(
+            sum(p.attrs['fubon_duplicate_audit']['duplicated_timestamp_groups']
+                for p in frames) + extra['duplicated_timestamp_groups']),
+        'status': 'PROVIDER_RESPONSE_AUDITED',
+    }
+    return combined

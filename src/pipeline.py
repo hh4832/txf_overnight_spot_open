@@ -17,6 +17,7 @@ from .conditional_analysis import conditional
 from .robustness import analyze
 from .trading_reference import trading_reference
 from .market_calendar_exceptions import reviewed_txf_closed_partition, reviewed_0050_suspension
+from .fubon_candle_dedup import reconcile_identical_candles
 from .reporting import write
 
 
@@ -84,6 +85,19 @@ def run(cfg,root='outputs',cache_root=None,rest=None):
             if rest is None:
                 sdk=login_fubon();rest=sdk.marketdata.rest_client.futopt
             partitions=[]
+            duplicate_partition_rows=[]
+            duplicate_columns=['start','end','cache_hit','rows_stored',
+                               'provider_raw_rows','within_fetch_duplicates_removed',
+                               'duplicated_timestamp_groups','audit_status']
+            pd.DataFrame(columns=duplicate_columns).to_csv(
+                run_dir/'diagnostics/fubon_partition_duplicate_audit.csv',index=False)
+            pd.DataFrame(columns=['scope','rows_before','rows_after',
+                                  'exact_duplicates_removed','duplicated_timestamp_groups',
+                                  'conflicting_timestamp_groups','status']).to_csv(
+                run_dir/'diagnostics/fubon_cross_partition_duplicate_audit.csv',index=False)
+            info['fubon_within_fetch_duplicates_removed_known']=0
+            info['fubon_legacy_cache_partitions_without_raw_audit']=0
+            info['fubon_cross_partition_duplicates_removed']=None
             closed_partitions=[]
             closed_columns=['start','end','reason','source_url','decision']
             pd.DataFrame(columns=closed_columns).to_csv(
@@ -124,12 +138,36 @@ def run(cfg,root='outputs',cache_root=None,rest=None):
                     continue
                 # Unlisted empty/error weeks must remain fatal; no inferred
                 # closure based on vendor errors or missing 0050 sessions.
-                partitions.append(cache.get('fubon_txf',params,
+                part=cache.get('fubon_txf',params,
                     lambda p=params:fetch_fubon(rest,p['start'],p['end'],
-                                                cfg['request_spacing_seconds'])))
+                                                cfg['request_spacing_seconds']))
+                partitions.append(part)
+                meta=cache.manifest[-1]['fubon_duplicate_audit']
+                removed=meta.get('within_fetch_duplicates_removed')
+                if removed is None:
+                    info['fubon_legacy_cache_partitions_without_raw_audit']+=1
+                else:
+                    info['fubon_within_fetch_duplicates_removed_known']+=int(removed)
+                duplicate_partition_rows.append({
+                    'start':params['start'], 'end':params['end'],
+                    'cache_hit':cache.manifest[-1]['cache_hit'],
+                    'rows_stored':len(part),
+                    'provider_raw_rows':meta.get('raw_rows'),
+                    'within_fetch_duplicates_removed':removed,
+                    'duplicated_timestamp_groups':meta.get('duplicated_timestamp_groups'),
+                    'audit_status':meta['status'],
+                })
+                pd.DataFrame(duplicate_partition_rows,columns=duplicate_columns).to_csv(
+                    run_dir/'diagnostics/fubon_partition_duplicate_audit.csv',index=False)
             if not partitions:
                 raise ValueError('No observed TXF bars: only reviewed closures in requested range')
-            bars=pd.concat(partitions,ignore_index=True)
+            stage='FUBON_CROSS_PARTITION_DEDUP'
+            current_partition='ALL_CACHED_PARTITIONS'
+            bars, cross_report=reconcile_identical_candles(pd.concat(partitions,ignore_index=True))
+            pd.DataFrame([{'scope':'all_partitions', **cross_report}]).to_csv(
+                run_dir/'diagnostics/fubon_cross_partition_duplicate_audit.csv',index=False)
+            info['fubon_cross_partition_duplicates_removed']=cross_report['exact_duplicates_removed']
+            info['fubon_cross_partition_duplicate_timestamp_groups']=cross_report['duplicated_timestamp_groups']
         stage='SESSION_VALIDATION'
         current_partition=None
         events,qa=build(bars,spot,cfg,return_diagnostics=True)

@@ -286,3 +286,43 @@ Confirmed successful 7-day partitions already in Drive cache are reused
 without network requests, and old result run folders are not overwritten.
 Further fully closed weeks in the historical range are not assumed; a new
 unrecognized empty week will fail and must be verified independently.
+
+## v0.1.4 Fubon duplicate candle hotfix
+
+Confirmed example (2019-09-30..2019-10-06, afterhours): 4,155
+provider rows, 3,318 distinct timestamps, 837 duplicated timestamps.
+All duplicates observed in that sample had identical contract month and
+OHLCV; the figures are **diagnostic observations, not strategy performance**.
+
+Only records with identical normalized Asia/Taipei timestamp, session,
+actual contract month, open, high, low, close, AND volume can be consolidated.
+The first exact copy is retained. Any same-timestamp disagreement in
+session, contract month or OHLCV raises an error and ends the live run.
+Never use arbitrary keep-first/keep-last conflict resolution.
+
+`src/fetch_fubon.py` applies exact-only deduplication after timestamp and
+OHLCV validation and **before** immutable weekly partition caching.
+`src/pipeline.py` checks exact overlaps again while merging all
+weekly partitions; vendor query boundaries can include other weeks'
+session bars. No provider query dates are silently shifted and no raw
+bar time labels are modified.
+
+Audit/provenance outputs:
+- `diagnostics/fubon_partition_duplicate_audit.csv`: start/end,
+  cache status, stored rows, known raw rows, within-fetch removals and
+  timestamp-group count.
+- `diagnostics/fubon_cross_partition_duplicate_audit.csv`:
+  deduplication applied after all cached partitions are concatenated.
+- `run_info.json`: known provider duplicate totals, number of old
+  partitions without original dedup metadata, and merged overlap total.
+- `raw_manifest/manifest.json` and existing checksum-protected cache
+  metadata: source partition and duplicate audit, with hashes for
+  cleaned partition data.
+
+Older cached partitions are read unchanged; they may have zero
+duplicates *after previous normalization* but their original provider
+row counts were not recorded. Their within-fetch duplicates are
+therefore marked `NOT_RECORDED_LEGACY_CACHE`, not assumed zero.
+This hotfix does NOT alter predeclared research features, calendar,
+closing-price convention, OOS rules or statistics. Restart Colab
+runtime to load the latest `main` modules before another Run All.

@@ -63,3 +63,12 @@ If previously cached TXF data or observed spot sessions conflict with an
 approved closure, fail closed. Label 0050 2025-06-11..17 all-field gaps
 as a verified split suspension, without changing adjusted prices or creating
 synthetic sessions. All other missing dates remain uncertain.
+
+v0.1.4 provider duplicate hotfix: Same Asia/Taipei timestamp is only
+deduplicated if session, ACTUAL contract month and all numeric OHLCV
+are identical; any mismatch fails closed, including across weekly
+parquet partitions. Never reinterpret time labels, fill gaps or alter
+prices. Store within-fetch counts in checksum-protected cache metadata,
+keep old partition files immutable, and mark legacy cache raw counts
+UNKNOWN. Report cross-partition overlaps in diagnostics and run_info.
+Do not infer signal validity from duplicate removal.
