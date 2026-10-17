@@ -17,3 +17,13 @@ v0.1.1: preserve all raw caches and prior run folders. Quarantine unverified
 13:45 and 05:00 boundary records, exclude affected in-range events, and log
 out-of-range anomalies without blocking pilot. Verify wheel by SHA256 and
 platform before installation from authenticated private Drive file ID.
+
+v0.1.2: validation mode is an isolated, bounded data-quality audit. It must
+NOT run regression, OOS, HAC, p-value estimation, hyperparameter search, or
+trade-signal classification. Preserve pilot/full constraints. Compare every
+VALID event with unmodified source bars, time availability, actual contract,
+verified adjusted spot open/close and recomputed return identities. Keep every
+EXCLUDED event and each provider anomaly for review. Never hide an audit
+mismatch behind a success label; never mislabel synthetic fixtures as live.
+Nominal 300/840 minute counts are descriptive, not proof of a trading outage.
+Use new run folders and checksum-checked cache; preserve existing raw data.

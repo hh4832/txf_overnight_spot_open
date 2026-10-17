@@ -47,3 +47,29 @@ Raw 14-day overfetch is retained without alteration; anomalies outside the
 requested signal dates are recorded in session_anomalies.csv but do not block
 unaffected events. Structural anomalies inside a signal event cause exclusion.
 This correction is pending revalidation on real historical data.
+
+## v0.1.2 validation-only data contract
+
+`validation` is bounded to 100 days between configured start and end.
+The default Phase B range is 2026-07-01 to 2026-09-30. Raw provider cache is
+immutable, verified with SHA256 and reused by the existing cache adapter.
+Signal dates are confined to the configured range; overfetch data are only
+for constructing observed next-spot sessions and outcomes. Unknown 13:45
+regular/05:00 afterhours labeling is still quarantined in raw QA.
+
+For every VALID event, an independent QA pass recomputes the 13:45 day close
+from its source start-labelled bar, the subsequent 05:00 night close from
+its source start-labelled bar, checks the true YYYYMM futures contract, next
+observed 0050 session and all three adjusted ETF prices, and recomputes all
+four decomposition returns. Stored values must match within a fixed numerical
+comparison tolerance (relative 1e-10, absolute 1e-12). Clock availability
+checks do not infer additional market sessions. An excluded event must have
+a documented reason; it is never a passed event. Coverage totals (nominal
+300 regular, 840 afterhours) are *descriptive only*. Unsupported vendor
+timestamp semantics continue to require explicit external validation.
+
+Output artifacts include event price QA, daily coverage, monthly QA and
+exclusion reason tables. QA status PASS/REVIEW_REQUIRED/BLOCKED is never
+a finding about predictive ability, market impact or trading profitability.
+No inferential statistics run in this mode. The original v0.1.1 pilot
+and v0.1.0 formal hypotheses/returns remain unchanged.

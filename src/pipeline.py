@@ -74,38 +74,66 @@ def run(cfg,root='outputs',cache_root=None,rest=None):
         qa.to_csv(run_dir/'diagnostics/session_anomalies.csv',index=False)
         info['session_anomalies_total']=len(qa)
         info['session_anomalies_in_range']=int(qa.affects_research_event.sum()) if len(qa) else 0
-        if events.empty: raise ValueError('No candidate events')
+        if events.empty:
+            if cfg['mode'] != 'validation':
+                raise ValueError('No candidate events')
+            events = pd.DataFrame(columns=[
+                'signal_trade_date', 'next_spot_trade_date',
+                'data_quality_status', 'exclusion_reason', 'rollover_flag',
+                'weekend_flag', 'holiday_gap_flag'])
         for c in [X,*Y,'spot_total_return','txf_1330_to_0500','txf_1330_to_1345','txf_0500_to_0845','corporate_action_boundary']:
             if c not in events: events[c]=False if c=='corporate_action_boundary' else float('nan')
         valid=events[events.data_quality_status=='VALID'].copy()
         events.to_parquet(run_dir/'processed/event_dataset.parquet',index=False)
         info.update(n_candidates=len(events),n_valid=len(valid),exclusions=events.exclusion_reason.value_counts().to_dict())
-        if valid.empty: raise ValueError('No valid events; research blocked')
-        stage='STATISTICS'
-        prob,bins=conditional(valid,cfg);annual,robust=analyze(valid,cfg);pred=oos(valid,cfg)
-        tables={'descriptive_statistics':valid[[X,*Y,'spot_total_return']].describe().reset_index(),
-                'gap_regression':pd.DataFrame([regression(valid,Y[0],cfg)]),
-                'intraday_regression':pd.DataFrame([regression(valid,Y[1],cfg)]),
-                'conditional_probability':prob,'conditional_bins':bins,'annual_stability':annual,
-                'out_of_sample_results':pred,'out_of_sample_scores':oos_scores(pred),'robustness_summary':robust}
-        info.update(status=('SMOKE_COMPLETE' if cfg['mode']=='smoke' else
-                            'DATA_PIPELINE_VALIDATED' if cfg['mode']=='pilot' else
-                            'LIVE_FRAMEWORK_RUN_COMPLETE'),
-                    live_data_validation=('PILOT_VALIDATED' if cfg['mode']=='pilot' else
-                                          'LIVE_DATA_VALIDATION_PENDING'),
-                    research_decision='INCONCLUSIVE' if len(valid)>=cfg['min_observations'] and cfg['mode']!='smoke' else 'DATA_INSUFFICIENT',
-                    n_candidates=len(events),n_valid=len(valid),exclusions=events.exclusion_reason.value_counts().to_dict(),
-                    coverage={'futures_first':str(bars.timestamp.min()),'futures_last':str(bars.timestamp.max()),
-                              'spot_first':spot.date.min(),'spot_last':spot.date.max()})
-        stage='REPORT_GENERATION'
-        write(run_dir,events,tables,info)
+        if cfg['mode'] == 'validation':
+            from .quality_audit import write_quality_report
+            stage='DATA_QUALITY_AUDIT'
+            qa_status, _audit_tables = write_quality_report(
+                run_dir, events, qa, bars, spot, cfg, info)
+            info.update(
+                qa_status=qa_status,
+                n_excluded=len(events)-len(valid),
+                research_decision='NOT_EVALUATED',
+                live_data_validation=(
+                    'VALIDATION_QA_COMPLETE' if qa_status == 'PASS' else
+                    'VALIDATION_REVIEW_REQUIRED'),
+                status=(
+                    'DATA_QUALITY_VALIDATED' if qa_status == 'PASS' else
+                    'DATA_QUALITY_REVIEW_REQUIRED'),
+                coverage={'futures_first':str(bars.timestamp.min()),
+                          'futures_last':str(bars.timestamp.max()),
+                          'spot_first':str(spot.date.min()),
+                          'spot_last':str(spot.date.max())})
+            if qa_status == 'BLOCKED':
+                raise ValueError('Price or timing audit mismatch')
+        else:
+            if valid.empty: raise ValueError('No valid events; research blocked')
+            stage='STATISTICS'
+            prob,bins=conditional(valid,cfg);annual,robust=analyze(valid,cfg);pred=oos(valid,cfg)
+            tables={'descriptive_statistics':valid[[X,*Y,'spot_total_return']].describe().reset_index(),
+                    'gap_regression':pd.DataFrame([regression(valid,Y[0],cfg)]),
+                    'intraday_regression':pd.DataFrame([regression(valid,Y[1],cfg)]),
+                    'conditional_probability':prob,'conditional_bins':bins,'annual_stability':annual,
+                    'out_of_sample_results':pred,'out_of_sample_scores':oos_scores(pred),'robustness_summary':robust}
+            info.update(status=('SMOKE_COMPLETE' if cfg['mode']=='smoke' else
+                                'DATA_PIPELINE_VALIDATED' if cfg['mode']=='pilot' else
+                                'LIVE_FRAMEWORK_RUN_COMPLETE'),
+                        live_data_validation=('PILOT_VALIDATED' if cfg['mode']=='pilot' else
+                                              'LIVE_DATA_VALIDATION_PENDING'),
+                        research_decision='INCONCLUSIVE' if len(valid)>=cfg['min_observations'] and cfg['mode']!='smoke' else 'DATA_INSUFFICIENT',
+                        n_candidates=len(events),n_valid=len(valid),exclusions=events.exclusion_reason.value_counts().to_dict(),
+                        coverage={'futures_first':str(bars.timestamp.min()),'futures_last':str(bars.timestamp.max()),
+                                  'spot_first':spot.date.min(),'spot_last':spot.date.max()})
+            stage='REPORT_GENERATION'
+            write(run_dir,events,tables,info)
     except Exception as exc:
         code=stage+'_'+type(exc).__name__.upper()
         info.update(status='FAILED',error_stage=stage,error_code=code,
                     error_type=type(exc).__name__,
                     safe_error_message='Research stopped at '+stage+'; see data QA or provider access.',
                     data_provider=data_provider,current_partition=current_partition,
-                    research_decision='DATA_INSUFFICIENT')
+                    research_decision='NOT_EVALUATED' if cfg['mode']=='validation' else 'DATA_INSUFFICIENT')
         (run_dir/'diagnostics/diagnostics.md').write_text(
             '# FAILED (no research conclusion)\n\n'
             'Stage: '+stage+'\nError code: '+code+'\n'
@@ -120,7 +148,7 @@ def run(cfg,root='outputs',cache_root=None,rest=None):
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--config',default='configs/research.yaml');p.add_argument('--mode',choices=['smoke','pilot','full']);p.add_argument('--output',default='outputs')
+    p=argparse.ArgumentParser();p.add_argument('--config',default='configs/research.yaml');p.add_argument('--mode',choices=['smoke','pilot','validation','full']);p.add_argument('--output',default='outputs')
     args=p.parse_args();print(run(load(args.config,mode=args.mode),args.output))
 
 if __name__=='__main__': main()

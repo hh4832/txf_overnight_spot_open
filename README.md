@@ -1,4 +1,4 @@
-# TXF Overnight → Next-Day Spot Open v0.1.1
+# TXF Overnight → Next-Day Spot Open v0.1.2
 
 研究框架，沒有下單功能。`FRAMEWORK_COMPLETE` 為無憑證測試通過後的框架交付狀態，非真實研究完成。`LIVE_DATA_VALIDATION_PENDING`。
 
@@ -61,3 +61,59 @@ OOS 每次只使用更早日期訓練，與 expanding historical mean baseline �
 - Failed runs 記錄 `error_stage`, `error_code`, `error_type`, `safe_error_message`, `data_provider`, `current_partition`；不儲存原始第三方 exception 訊息。
 - 官方 Linux SDK 檔案位於私人 Drive，File ID `1zlSiNYhvhs82Pt6wB4nfSNCTco0UMzim`；固定 SHA256 `065c636ea58e00db9fe67aa6ba0936b234ac131da0d4697e9c6f33dbe42bc1ba`。需有該檔案讀取權限；若 wheel 更新，需人工重新審核並更新固定 hash。
 - 重跑 2026-09-01 至 2026-09-07 pilot 前，請確保 Colab secrets 及憑證檔路徑在**當次 Runtime** 可用。真實資料尚待再次驗證：`LIVE_PILOT_REVALIDATION_PENDING`。
+
+## v0.1.2 — Extended Validation Mode (Phase A audit / Phase B QA)
+
+**Validation does not test H1, H2, H3, trading performance, statistical significance,
+HAC, FDR or OOS.** It only audits market-data provenance, contract identities,
+event timestamps, and reconstruction of individual returns.
+
+Colab: [runner](https://colab.research.google.com/github/hh4832/txf_overnight_spot_open/blob/main/notebooks/run_txf_overnight_spot_open.ipynb).
+
+Set `MODE='validation'`, leave `CONFIRM_FULL=False`. Recommended sequence:
+
+- Phase A replay: `START='2026-09-01'`, `END='2026-09-07'`; compare five
+  candidate events to immutable source candles and 0050 adjusted prices.
+- Phase B bounded QA: `START='2026-07-01'`, `END='2026-09-30'` (92 calendar
+  dates inclusive); do not run this until Phase A reports no price mismatches.
+- Full history: still requires `MODE='full'` and explicit `CONFIRM_FULL=True`.
+  It is a distinct formal research operation.
+
+Validation spans at most `validation_max_calendar_days+1` dates (default
+101 inclusive, since the guard limits end-minus-start to 100 days). The existing
+pilot guard remains 14 calendar-day difference. Download extends 14 calendar
+days after the requested end for verified next-day outcomes; cache partitions
+keep their original keys and SHA256. The original raw parquet files are not
+rewritten; a fresh timestamped run folder is created each time.
+
+Output artifacts:
+
+- `processed/event_dataset.parquet` with candidate-level exclusion reasons;
+- `tables/event_price_audit.csv`: independent close timestamp, contract month,
+  source price and price/return agreement against preserved provider records;
+- `tables/daily_coverage.csv`: session minute counts, zero-volume bars, timing
+  anomalies, weekend/holiday flags, exclusion reasons;
+- `tables/monthly_qa.csv`: grouped candidate, valid, excluded, rollover,
+  anomalies and nominal bar coverage;
+- `tables/exclusion_reasons.csv`;
+- `diagnostics/session_anomalies.csv` with in-range/out-of-range classification;
+- `reports/data_quality_audit.md`, `reports/summary.md`, `reports/summary.xlsx`;
+- `raw_manifest/manifest.json`, `run_info.json`.
+
+QA states: `PASS` means all valid events were recomputed and no in-range
+anomaly/exclusion occurred; `REVIEW_REQUIRED` means excluded events,
+anomalies or no events require examination; `BLOCKED` means a valid event's
+raw price, time, contract or return differs from its reconstructed record.
+Never treat a review or blocked result as research acceptance. Normal minute
+counts 300 regular / 840 overnight are **descriptive** rather than blanket
+exchange-hours guarantees. The source candle start-labeling at 13:45 and
+05:00 remains an unconfirmed vendor semantic assumption, not official evidence.
+
+Python module caching in Colab matters: restart the runtime before a new
+Git checkout, then Run All. The runner refuses stale imports instead of
+quietly mixing previously loaded functions with a newly checked-out Git SHA.
+
+The validation phase can be re-run without downloading identical cached
+partitions. Real-data access still requires the user's authorized private
+Fubon and FinLab credentials. Successful CI synthetic tests do not verify
+2026-07-01..2026-09-30 live market coverage.
