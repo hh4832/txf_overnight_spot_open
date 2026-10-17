@@ -57,6 +57,11 @@ def _bars_for_day(day,price):
 def _fake_sources(monkeypatch,include_conflict=False,broken_week=None):
     import src.fetch_finlab as fl
     import src.fetch_fubon as fb
+    import src.fetch_finlab_calendar as calendar_provider
+    from src.synthetic import generate_txf_calendar
+    inactive=pd.date_range('2019-02-04','2019-02-10').strftime('%Y-%m-%d')
+    monkeypatch.setattr(calendar_provider,'fetch',
+                        lambda a,b:generate_txf_calendar(a,b,inactive))
 
     days=['2019-01-28','2019-02-11','2019-02-18','2019-02-25','2019-03-04']
     spot=pd.DataFrame([
