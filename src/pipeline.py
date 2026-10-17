@@ -7,6 +7,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
 import uuid
+import hashlib
 import pandas as pd
 from .config import load
 from .cache import Cache,digest
@@ -15,6 +16,7 @@ from .statistics import regression,oos,oos_scores,X,Y
 from .conditional_analysis import conditional
 from .robustness import analyze
 from .trading_reference import trading_reference
+from .market_calendar_exceptions import reviewed_txf_closed_partition, reviewed_0050_suspension
 from .reporting import write
 
 
@@ -64,10 +66,16 @@ def run(cfg,root='outputs',cache_root=None,rest=None):
                           else pd.Series(False,index=spot.index))
             missing_dates=spot.loc[missing_flag,['date']].copy()
             missing_dates['reason']='ALL_FOUR_FINLAB_0050_PRICE_FIELDS_MISSING'
-            missing_dates['calendar_interpretation']='UNKNOWN_HOLIDAY_OR_PROVIDER_OMISSION'
+            reviewed_suspensions=missing_dates['date'].map(reviewed_0050_suspension)
+            missing_dates['calendar_interpretation']=reviewed_suspensions.map(
+                lambda entry: entry['reason'] if entry else 'UNKNOWN_HOLIDAY_OR_PROVIDER_OMISSION')
+            missing_dates['evidence_url']=reviewed_suspensions.map(
+                lambda entry: entry['source_url'] if entry else '')
             missing_dates.to_csv(run_dir/'diagnostics/finlab_missing_dates.csv',index=False)
             info['finlab_0050_fully_missing_count']=len(missing_dates)
             info['finlab_0050_fully_missing_dates']=missing_dates['date'].tolist()
+            info['finlab_0050_verified_suspension_dates']=missing_dates.loc[
+                reviewed_suspensions.notna(),'date'].tolist()
             spot=spot.loc[~missing_flag].copy()
             if spot.empty:
                 raise ValueError('No fully observed 0050 prices remain')
@@ -76,13 +84,51 @@ def run(cfg,root='outputs',cache_root=None,rest=None):
             if rest is None:
                 sdk=login_fubon();rest=sdk.marketdata.rest_client.futopt
             partitions=[]
+            closed_partitions=[]
+            closed_columns=['start','end','reason','source_url','decision']
+            pd.DataFrame(columns=closed_columns).to_csv(
+                run_dir/'diagnostics/fubon_closed_partitions.csv',index=False)
+            info['fubon_verified_closed_partitions']=[]
+            info['fubon_verified_closed_partition_count']=0
             for start in pd.date_range(cfg['start'],end,freq='7D'):
                 stop=min(start+pd.Timedelta(days=6),pd.Timestamp(end))
                 params=dict(start=start.strftime('%Y-%m-%d'),end=stop.strftime('%Y-%m-%d'),
                             product='TXF',contractMonth='1!',timeframe='1')
                 stage='FUBON_FETCH'
                 current_partition=params['start']+'..'+params['end']
-                partitions.append(cache.get('fubon_txf',params,lambda p=params:fetch_fubon(rest,p['start'],p['end'],cfg['request_spacing_seconds'])))
+                reviewed=reviewed_txf_closed_partition(params['start'],params['end'])
+                if reviewed:
+                    # A reviewed full closure is a calendar exception, not an
+                    # empty/valid provider response; never create fake bars.
+                    # Inconsistent independently cached or spot observations
+                    # require investigation rather than automatic suppression.
+                    key=hashlib.sha256(json.dumps(params,sort_keys=True).encode()).hexdigest()
+                    cached_path=cache.root/'fubon_txf'/f'{key}.parquet'
+                    if cached_path.exists():
+                        raise ValueError('Exchange closure conflicts with cached TXF observations')
+                    if spot['date'].between(params['start'],params['end']).any():
+                        raise ValueError('Exchange closure conflicts with observed 0050 sessions')
+                    record={'start':params['start'],'end':params['end'],
+                            'reason':reviewed['reason'],
+                            'source_url':reviewed['source_url'],
+                            'decision':'SKIP_VERIFIED_EXCHANGE_CLOSURE'}
+                    closed_partitions.append(record)
+                    pd.DataFrame(closed_partitions,columns=closed_columns).to_csv(
+                        run_dir/'diagnostics/fubon_closed_partitions.csv',index=False)
+                    info['fubon_verified_closed_partitions']=closed_partitions.copy()
+                    info['fubon_verified_closed_partition_count']=len(closed_partitions)
+                    cache.manifest.append({
+                        'provider':'fubon_txf','params':params,'sha256':None,
+                        'rows':0,'cache_hit':False,'status':'SKIPPED_REVIEWED_FULL_CLOSURE',
+                        'source_url':reviewed['source_url']})
+                    continue
+                # Unlisted empty/error weeks must remain fatal; no inferred
+                # closure based on vendor errors or missing 0050 sessions.
+                partitions.append(cache.get('fubon_txf',params,
+                    lambda p=params:fetch_fubon(rest,p['start'],p['end'],
+                                                cfg['request_spacing_seconds'])))
+            if not partitions:
+                raise ValueError('No observed TXF bars: only reviewed closures in requested range')
             bars=pd.concat(partitions,ignore_index=True)
         stage='SESSION_VALIDATION'
         current_partition=None

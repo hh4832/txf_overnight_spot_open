@@ -54,3 +54,12 @@ normalized cache and emit exact date diagnostics in run_info and CSV; do not
 silently treat them as confirmed holidays. Never mask partial price NaNs,
 invalid prices, index disagreement, or factor mismatch. Keep adjusted price
 as the primary outcome. Existing historical output folders are immutable.
+
+Verified calendar hotfix: skip only a complete TXF query partition within
+an officially reviewed no-trade date interval. Do not infer closures from
+an empty vendor response. Record each skip, official source, and zero-row
+(no SHA) manifest entry; never create or overwrite empty cache files.
+If previously cached TXF data or observed spot sessions conflict with an
+approved closure, fail closed. Label 0050 2025-06-11..17 all-field gaps
+as a verified split suspension, without changing adjusted prices or creating
+synthetic sessions. All other missing dates remain uncertain.

@@ -1,4 +1,4 @@
-# TXF Overnight → Next-Day Spot Open v0.1.3
+# TXF Overnight → Next-Day Spot Open v0.1.4
 
 研究框架，沒有下單功能。`FRAMEWORK_COMPLETE` 為無憑證測試通過後的框架交付狀態，非真實研究完成。`LIVE_DATA_VALIDATION_PENDING`。
 
@@ -249,3 +249,40 @@ observed price is invalid or the adjustment factors disagree, **fail
 closed**. No substitution, forward-fill, adjusted/raw mixing, changed
 factor tolerance, or fabricated trading sessions is permitted.
 This affects data-quality classification, not a trading result.
+
+## Historical full-closure partition hotfix (v0.1.4)
+
+**Reviewed TAIFEX closed interval:** 2019-02-04 through 2019-02-10.
+TAIFEX official 2019-01-02 letter documents 2019-02-04 through 2019-02-08
+Lunar New Year futures closure; February 9-10 are Saturday/Sunday:
+https://www.taifex.com.tw/file/taifex/CHINESE/11/attach/%E5%85%AC%E5%91%8A%E6%9C%AC%E5%85%AC%E5%8F%B8%E6%9C%9F%E8%B2%A8%E9%9B%86%E4%B8%AD%E4%BA%A4%E6%98%93%E5%B8%82%E5%A0%B4108%E5%B9%B4%E8%BE%B2%E6%9B%86%E6%98%A5%E7%AF%80%E4%BC%91%E5%B8%82%E6%9A%A8%E7%9B%B8%E9%97%9C%E4%BA%8B%E5%AE%9C.pdf
+
+Only a *partition completely contained* in a separately reviewed closed
+interval may skip the Fubon API. A skipped partition is recorded in
+`diagnostics/fubon_closed_partitions.csv`, `run_info.json`, and the raw
+manifest as `SKIPPED_REVIEWED_FULL_CLOSURE` with 0 records, no file and no
+fabricated SHA256. If any historical cache or observed 0050 sessions conflict
+with the reviewed closure, the run fails for manual review. An unlisted empty
+or failing provider response is **never** inferred to be an exchange holiday.
+More reviewed exceptions must be added explicitly to
+`src/market_calendar_exceptions.py` using independent official sources.
+
+**Reviewed 0050 split suspension:** 2025-06-11 through 2025-06-17. The
+Taiwan Stock Exchange reported trading suspension for the 4-for-1 split,
+with trading resuming on 2025-06-18:
+https://www.twse.com.tw/zh/ETFortune/announcement?company=A00005&date=20250617&fund=0050&seq=1&type=other
+
+Fully missing daily 0050 observations in this date interval are labelled
+`ETF_0050_VERIFIED_SPLIT_TRADING_SUSPENSION` in the existing
+`diagnostics/finlab_missing_dates.csv` and `run_info.json`. Missing-date
+observations are preserved in the source cache and excluded from 0050
+events, never forward-filled. Dates outside approved intervals remain
+`UNKNOWN_HOLIDAY_OR_PROVIDER_OMISSION`. Partial source NaNs, adjustment
+factor mismatches and normal API failures still abort. Historical cashflows,
+TXF adaptive close, research outcomes, and statistical settings are unchanged.
+
+**Rerun:** Restart Colab runtime and Run All from GitHub `main`.
+Confirmed successful 7-day partitions already in Drive cache are reused
+without network requests, and old result run folders are not overwritten.
+Further fully closed weeks in the historical range are not assumed; a new
+unrecognized empty week will fail and must be verified independently.
