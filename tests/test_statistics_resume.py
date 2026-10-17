@@ -32,10 +32,11 @@ def fake_archived_source(tmp_path, corrupt=False):
         (source/sub).mkdir(parents=True)
     (source/'processed/event_dataset.parquet').parent.mkdir(exist_ok=True)
     if corrupt:
-        # A nonboolean source flag must not be silently coerced.
-        ix=valid.index[0]
-        events['corporate_action_boundary']=events.corporate_action_boundary.astype(object)
-        events.loc[ix,'corporate_action_boundary']=1
+        # Parquet can serialize string pseudo-booleans; do not coerce these
+        # back to booleans while reconstructing a failed research run.
+        events['corporate_action_boundary']=events['corporate_action_boundary'].map(
+            lambda value: 'True' if value is True or
+            isinstance(value, np.bool_) and value else 'False')
     else:
         # Mirrors real parquet's mixed object flag type without altering truth.
         for field in ('corporate_action_boundary','weekend_flag','holiday_gap_flag'):
