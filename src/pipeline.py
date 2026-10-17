@@ -18,6 +18,11 @@ from .robustness import analyze
 from .trading_reference import trading_reference
 from .market_calendar_exceptions import reviewed_txf_closed_partition, reviewed_0050_suspension
 from .fubon_candle_dedup import reconcile_identical_candles
+from .fetch_finlab_calendar import (
+    fetch as fetch_txf_calendar, validate_calendar, partition_activity,
+    SOURCE as TX_CALENDAR_SOURCE, SOURCE_URL as TX_CALENDAR_URL,
+    SCHEMA as TX_CALENDAR_SCHEMA,
+)
 from .reporting import write
 
 
@@ -80,11 +85,44 @@ def run(cfg,root='outputs',cache_root=None,rest=None):
             spot=spot.loc[~missing_flag].copy()
             if spot.empty:
                 raise ValueError('No fully observed 0050 prices remain')
+            stage='FINLAB_TX_CALENDAR_FETCH'
+            data_provider='finlab_txf_calendar'
+            # Preserve raw calendar-day gaps; add ±14d *observation* buffers to
+            # verify that skipped weeks are bracketed by independent TX trade
+            # activity. TX session volumes do not rewrite any Fubon timestamps.
+            calendar_start=(pd.Timestamp(cfg['start'])-pd.Timedelta(days=14)).strftime('%Y-%m-%d')
+            calendar_end=(pd.Timestamp(end)+pd.Timedelta(days=14)).strftime('%Y-%m-%d')
+            calendar=cache.get('finlab_txf_calendar',dict(
+                start=calendar_start,end=calendar_end,
+                dataset=TX_CALENDAR_SOURCE,schema=TX_CALENDAR_SCHEMA),
+                lambda:fetch_txf_calendar(calendar_start,calendar_end))
+            calendar=validate_calendar(calendar,calendar_start,calendar_end)
+            observed_tx=calendar.loc[calendar.has_tx_activity,'date']
+            if (observed_tx.min() > pd.Timestamp(cfg['start']).strftime('%Y-%m-%d') or
+                    observed_tx.max() < end):
+                # Allow only a bounded holiday/weekend boundary. Per-partition
+                # all-closed tests require both nearby positive activity anchors.
+                if ((pd.Timestamp(observed_tx.min())-pd.Timestamp(cfg['start'])).days > 14 or
+                        (pd.Timestamp(end)-pd.Timestamp(observed_tx.max())).days > 14):
+                    raise ValueError('FinLab TX calendar research range not covered')
+            info['tx_calendar_source']=TX_CALENDAR_SOURCE
+            info['tx_calendar_first_active_date']=observed_tx.min()
+            info['tx_calendar_last_active_date']=observed_tx.max()
+            info['tx_calendar_cache_hit']=cache.manifest[-1]['cache_hit']
+            info['tx_calendar_source_url']=TX_CALENDAR_URL
             stage='FUBON_LOGIN'
             data_provider='fubon_txf'
             if rest is None:
                 sdk=login_fubon();rest=sdk.marketdata.rest_client.futopt
             partitions=[]
+            calendar_alignment=[]
+            calendar_columns=['start','end','tx_trade_dates','tx_regular_dates',
+                              'tx_afterhours_dates','spot_session_dates',
+                              'decision','evidence','cache_hit']
+            pd.DataFrame(columns=calendar_columns).to_csv(
+                run_dir/'diagnostics/fubon_calendar_alignment.csv',index=False)
+            info['fubon_finlab_no_activity_partition_count']=0
+            info['fubon_finlab_no_activity_partitions']=[]
             duplicate_partition_rows=[]
             duplicate_columns=['start','end','cache_hit','rows_stored',
                                'provider_raw_rows','within_fetch_duplicates_removed',
@@ -111,37 +149,83 @@ def run(cfg,root='outputs',cache_root=None,rest=None):
                 stage='FUBON_FETCH'
                 current_partition=params['start']+'..'+params['end']
                 reviewed=reviewed_txf_closed_partition(params['start'],params['end'])
-                if reviewed:
-                    # A reviewed full closure is a calendar exception, not an
-                    # empty/valid provider response; never create fake bars.
-                    # Inconsistent independently cached or spot observations
-                    # require investigation rather than automatic suppression.
+                activity=partition_activity(calendar,params['start'],params['end'])
+                spot_sessions=spot.loc[
+                    spot['date'].between(params['start'],params['end']),'date'].tolist()
+                alignment={
+                    'start':params['start'],'end':params['end'],
+                    'tx_trade_dates':';'.join(activity['tx_trading_dates']),
+                    'tx_regular_dates':';'.join(activity['tx_regular_dates']),
+                    'tx_afterhours_dates':';'.join(activity['tx_afterhours_dates']),
+                    'spot_session_dates':';'.join(spot_sessions),
+                    'decision':'PENDING','evidence':TX_CALENDAR_URL,
+                    'cache_hit':None,
+                }
+                if reviewed and activity['has_tx_activity']:
+                    alignment['decision']='BLOCKED_OFFICIAL_FINLAB_CONFLICT'
+                    calendar_alignment.append(alignment)
+                    pd.DataFrame(calendar_alignment,columns=calendar_columns).to_csv(
+                        run_dir/'diagnostics/fubon_calendar_alignment.csv',index=False)
+                    raise ValueError('Reviewed exchange closure conflicts with FinLab TX activity')
+                if not activity['has_tx_activity']:
+                    # FinLab absence is only a historical screening criterion:
+                    # nearby positive activity anchors are required by
+                    # partition_activity, and actual 0050 trade days must not
+                    # contradict it. No K bars are synthesized or cached.
                     key=hashlib.sha256(json.dumps(params,sort_keys=True).encode()).hexdigest()
                     cached_path=cache.root/'fubon_txf'/f'{key}.parquet'
-                    if cached_path.exists():
-                        raise ValueError('Exchange closure conflicts with cached TXF observations')
-                    if spot['date'].between(params['start'],params['end']).any():
-                        raise ValueError('Exchange closure conflicts with observed 0050 sessions')
-                    record={'start':params['start'],'end':params['end'],
-                            'reason':reviewed['reason'],
-                            'source_url':reviewed['source_url'],
-                            'decision':'SKIP_VERIFIED_EXCHANGE_CLOSURE'}
-                    closed_partitions.append(record)
-                    pd.DataFrame(closed_partitions,columns=closed_columns).to_csv(
-                        run_dir/'diagnostics/fubon_closed_partitions.csv',index=False)
-                    info['fubon_verified_closed_partitions']=closed_partitions.copy()
-                    info['fubon_verified_closed_partition_count']=len(closed_partitions)
+                    if cached_path.exists() or spot_sessions:
+                        alignment['decision']='BLOCKED_SOURCE_CONFLICT'
+                        calendar_alignment.append(alignment)
+                        pd.DataFrame(calendar_alignment,columns=calendar_columns).to_csv(
+                            run_dir/'diagnostics/fubon_calendar_alignment.csv',index=False)
+                        raise ValueError('FinLab no-TX-activity week conflicts with cached TXF or 0050')
+                    reason=(reviewed['reason'] if reviewed
+                            else 'FINLAB_TX_NO_RECORDED_ACTIVITY_BOUNDED_AND_SPOT_CHECKED')
+                    source=(reviewed['source_url'] if reviewed else TX_CALENDAR_URL)
+                    decision=('SKIP_VERIFIED_EXCHANGE_CLOSURE' if reviewed
+                              else 'SKIP_FINLAB_NO_RECORDED_TX_ACTIVITY')
+                    alignment['decision']=decision
+                    alignment['evidence']=source
+                    calendar_alignment.append(alignment)
+                    pd.DataFrame(calendar_alignment,columns=calendar_columns).to_csv(
+                        run_dir/'diagnostics/fubon_calendar_alignment.csv',index=False)
+                    info['fubon_finlab_no_activity_partition_count']+=1
+                    info['fubon_finlab_no_activity_partitions'].append({
+                        'start':params['start'],'end':params['end'],
+                        'reason':reason,'source_url':source,
+                        'officially_verified':bool(reviewed),
+                    })
+                    if reviewed:
+                        record={'start':params['start'],'end':params['end'],
+                                'reason':reason,'source_url':source,'decision':decision}
+                        closed_partitions.append(record)
+                        pd.DataFrame(closed_partitions,columns=closed_columns).to_csv(
+                            run_dir/'diagnostics/fubon_closed_partitions.csv',index=False)
+                        info['fubon_verified_closed_partitions']=closed_partitions.copy()
+                        info['fubon_verified_closed_partition_count']=len(closed_partitions)
                     cache.manifest.append({
                         'provider':'fubon_txf','params':params,'sha256':None,
-                        'rows':0,'cache_hit':False,'status':'SKIPPED_REVIEWED_FULL_CLOSURE',
-                        'source_url':reviewed['source_url']})
+                        'rows':0,'cache_hit':False,
+                        'status':('SKIPPED_REVIEWED_FULL_CLOSURE' if reviewed
+                                  else 'SKIPPED_FINLAB_NO_TX_ACTIVITY'),
+                        'reason':reason,'source_url':source,
+                    })
                     continue
-                # Unlisted empty/error weeks must remain fatal; no inferred
-                # closure based on vendor errors or missing 0050 sessions.
+                # A week with one or more observed TX trade dates MUST download,
+                # regardless of weekends, typhoons or partial exchange closures.
+                alignment['decision']='REQUEST_FUBON_ACTIVE_WEEK'
+                calendar_alignment.append(alignment)
+                pd.DataFrame(calendar_alignment,columns=calendar_columns).to_csv(
+                    run_dir/'diagnostics/fubon_calendar_alignment.csv',index=False)
                 part=cache.get('fubon_txf',params,
                     lambda p=params:fetch_fubon(rest,p['start'],p['end'],
                                                 cfg['request_spacing_seconds']))
                 partitions.append(part)
+                calendar_alignment[-1]['decision']='FUBON_CACHED_OR_DOWNLOADED'
+                calendar_alignment[-1]['cache_hit']=cache.manifest[-1]['cache_hit']
+                pd.DataFrame(calendar_alignment,columns=calendar_columns).to_csv(
+                    run_dir/'diagnostics/fubon_calendar_alignment.csv',index=False)
                 meta=cache.manifest[-1]['fubon_duplicate_audit']
                 removed=meta.get('within_fetch_duplicates_removed')
                 if removed is None:

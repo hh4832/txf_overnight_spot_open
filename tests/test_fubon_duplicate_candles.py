@@ -110,6 +110,9 @@ def test_cache_preserves_duplicate_counts_and_marks_legacy_unknown(tmp_path):
 def _integration_sources(monkeypatch,conflicting=False):
     import src.fetch_finlab as fl
     import src.fetch_fubon as fb
+    import src.fetch_finlab_calendar as calendar_provider
+    from src.synthetic import generate_txf_calendar
+    monkeypatch.setattr(calendar_provider,'fetch',lambda a,b:generate_txf_calendar(a,b))
     bars,spot=generate()
     monkeypatch.setattr(fl,'fetch',lambda a,b:spot.copy())
     raw=bars.iloc[:150].copy()

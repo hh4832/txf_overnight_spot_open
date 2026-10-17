@@ -22,6 +22,9 @@ def fixtures(monkeypatch):
         dates = bars.timestamp.dt.strftime('%Y-%m-%d')
         return bars[(dates >= day_from) & (dates <= day_to)].copy()
 
+    import src.fetch_finlab_calendar as calendar_provider
+    from src.synthetic import generate_txf_calendar
+    monkeypatch.setattr(calendar_provider,'fetch',lambda a,b:generate_txf_calendar(a,b))
     monkeypatch.setattr(finlab, 'fetch', fake_finlab)
     monkeypatch.setattr(fubon, 'fetch', fake_fubon)
     return {**load(), 'mode':'validation', 'start':start, 'end':end}

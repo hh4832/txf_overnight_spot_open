@@ -109,6 +109,7 @@ def test_verified_closed_week_skipped_and_audited_in_full_pipeline(tmp_path,monk
     holiday=[m for m in manifest if m.get('status')=='SKIPPED_REVIEWED_FULL_CLOSURE']
     assert len(holiday)==1
     assert holiday[0]['rows']==0 and holiday[0]['sha256'] is None
+    assert any(p['provider']=='finlab_txf_calendar' for p in manifest)
     # No synthetic empty parquet is created for the closed interval.
     assert len(list((tmp_path/'cache/fubon_txf').glob('*.parquet')))==4
 
@@ -130,7 +131,8 @@ def test_reuse_unchanged_cache_and_do_not_requery_holiday(tmp_path,monkeypatch):
            (tmp_path/'cache/fubon_txf').glob('*.parquet')}
     assert before==after and second!=first
     manifest=json.loads((second/'raw_manifest/manifest.json').read_text())
-    assert sum(x.get('cache_hit') is True for x in manifest)==5
+    # The new separately cached FinLab TX calendar adds one cache hit.
+    assert sum(x.get('cache_hit') is True for x in manifest)==6
     assert sum(x.get('status')=='SKIPPED_REVIEWED_FULL_CLOSURE'
                for x in manifest)==1
 

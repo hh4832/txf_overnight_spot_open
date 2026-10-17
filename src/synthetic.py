@@ -21,3 +21,19 @@ def generate():
             bars.append(dict(timestamp=stamp.tz_localize('Asia/Taipei'),session=session,
                              contract_month='202212',open=value,high=value,low=value,close=value,volume=10))
     return pd.DataFrame(bars),pd.DataFrame(spot)
+
+
+def generate_txf_calendar(start, end, inactive_dates=()):
+    """Fabricated date/volume fixture for CI; NEVER a real market calendar."""
+    days = pd.date_range(start, end, freq='D')
+    inactive = set(inactive_dates)
+    active = pd.Series(
+        [(d.weekday() < 5 and d.strftime('%Y-%m-%d') not in inactive)
+         for d in days], dtype=bool)
+    return pd.DataFrame({
+        'date': days.strftime('%Y-%m-%d'),
+        'tx_regular_volume': active.map({True:100.0,False:np.nan}),
+        'tx_afterhours_volume': active.map({True:50.0,False:np.nan}),
+        'source_row_present': active.to_numpy(),
+        'has_tx_activity': active.to_numpy(),
+    })

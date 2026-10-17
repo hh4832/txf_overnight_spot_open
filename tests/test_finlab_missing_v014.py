@@ -70,6 +70,9 @@ def test_nonfinite_and_negative_actual_prices_remain_fatal():
 def test_pipeline_records_missing_days_before_futures_fetch(tmp_path,monkeypatch):
     import src.fetch_finlab as provider
     import src.fetch_fubon as future
+    import src.fetch_finlab_calendar as calendar_provider
+    from src.synthetic import generate_txf_calendar
+    monkeypatch.setattr(calendar_provider,'fetch',lambda a,b:generate_txf_calendar(a,b))
     bars,spot=generate()
     days=spot.date.iloc[:8].tolist()
     lost=days[3]

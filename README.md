@@ -326,3 +326,50 @@ therefore marked `NOT_RECORDED_LEGACY_CACHE`, not assumed zero.
 This hotfix does NOT alter predeclared research features, calendar,
 closing-price convention, OOS rules or statistics. Restart Colab
 runtime to load the latest `main` modules before another Run All.
+
+## FinLab TX daily activity → Fubon weekly request calendar
+
+FinLab documents `data.get("futures_price:成交量")` and the TX futures
+`TX一般` (regular) and `TX盤後` (afterhours) volume columns:
+https://finlab.finance/data/tw-futures-daily
+
+The **union of positive regular and afterhours historical volume dates**
+screens each Fubon seven-calendar-day provider-date partition. It is used
+only for data acquisition, never as a research feature or as an exchange
+settlement calendar. No Fubon candle timestamps or night-to-day mapping
+are changed.
+
+`src/fetch_finlab_calendar.py` fetches both raw source columns, validates
+their schema, date index, finite nonnegative volume and broad historical
+coverage, then retains one row for every calendar date (unobserved volumes
+are NaN, **not converted into an official-holiday fact**). The calendar
+is cached separately with SHA256 under `finlab_txf_calendar`, keyed by
+the source dataset and requested range, including ±14 calendar days of
+surrounding observations. On cache hits, continuity and activity flags are
+revalidated. A no-TX-activity seven-day window can only be skipped when
+*both* sources have no recorded positive trading volume, the interval is
+bracketed by positive TX observations within 14 calendar days on either
+side, and there are no actual 0050 trading sessions or pre-existing TXF
+cache files inside that query partition. Any conflicting 0050 trading
+dates, known official no-trade dates that appear as active in FinLab,
+unbracketed gaps, stale calendar coverage, vendor failures, or inconsistent
+cached records **abort** rather than classifying absence as a holiday.
+
+`diagnostics/fubon_calendar_alignment.csv` lists each provider-date
+partition, regular/afterhours positive activity dates, 0050 actual
+sessions, retrieval/skip decision, source and cache status. Metadata
+`run_info.json` includes FinLab calendar coverage, cache hit and skipped
+partitions; `raw_manifest/manifest.json` includes the checksum-verified
+FinLab TX calendar and explicit no-candle records for skipped windows.
+`SKIPPED_FINLAB_NO_TX_ACTIVITY` is an **evidence-based download skip,
+not an official exchange holiday certification**. Independently reviewed
+2019-02-04..10 TAIFEX closure retains the separate reviewed marker and
+source URL. 2021 Lunar New Year 2021-02-08..14 is handled by the general
+activity check without adding a new manual exception.
+
+Previously fetched Fubon weekly parquets remain immutable and are
+reused when the request parameters match; other provider failures still
+stop. Existing adjusted-price, overnight/adaptive-close, expiry,
+cross-week duplicate and statistical definitions are unchanged.
+Restart Colab runtime and Run All for the latest code. Validate actual
+FinLab source completeness before interpreting full multi-year results.

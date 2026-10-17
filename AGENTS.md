@@ -72,3 +72,14 @@ prices. Store within-fetch counts in checksum-protected cache metadata,
 keep old partition files immutable, and mark legacy cache raw counts
 UNKNOWN. Report cross-partition overlaps in diagnostics and run_info.
 Do not infer signal validity from duplicate removal.
+
+FinLab TX daily volume calendar hotfix: load futures_price:成交量
+TX一般 + TX盤後, use the positive-activity UNION solely to classify
+seven-day Fubon request partitions. Never infer official closures
+from missing volume or feed failure. Before skipping a full zero-
+activity partition require bracketing positive observations and
+no contradictory real 0050 sessions or existing TXF partition cache.
+Fail closed on source conflicts, stale/invalid calendar data, and
+unexpected vendor empties. Cache the calendar with SHA256; log source
+and each skip in alignment CSV, manifest and run_info. Preserve
+previous research outputs and never adjust Fubon session timestamps.
