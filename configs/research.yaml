@@ -1,4 +1,4 @@
-version: 0.1.3
+version: 0.1.4
 start: '2026-09-01'
 end: '2026-09-07'
 mode: smoke
@@ -12,7 +12,7 @@ request_spacing_seconds: 1.1
 max_close_staleness_minutes: 5
 confirm_full: false
 validation_max_calendar_days: 100
-# No event restoration until vendor timestamp semantics are independently verified.
+# Adaptive boundary closes are a declared research convention, not vendor proof.\nclose_policy: adaptive\n# Confirm any rescheduled expiry date against the exchange before inserting.\nexpiry_date_overrides: {}\n# Old v0.1.3 non-price marker gate retained only for backward-compatible strict mode. 
 boundary_semantics_verified: false
 boundary_evidence_reference: ''
 extreme_absolute_return: 0.05

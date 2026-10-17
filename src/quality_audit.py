@@ -12,8 +12,8 @@ import pandas as pd
 
 from .data_validation import inspect_bars
 from .session_alignment import last_bar
-from .expiry_calendar import select_verified_day_close, expected_regular_bars, verified_expiry_contract
-from .boundary_policy import decide_boundaries
+from .expiry_calendar import expiry_contract_for_day
+from .close_policy import choose_close
 from .minute_gaps import missing_minute_intervals
 from .trading_calendar import next_spot_day
 from .returns import compute
@@ -43,23 +43,28 @@ def audit_events(raw_bars, spot, events, anomalies, cfg):
     events remain explicit REVIEW_REQUIRED, not silently counted as passed.
     """
     clean, _, _, _ = inspect_bars(raw_bars, cfg['start'], cfg['end'])
+    groups={(d,ss):g for (d,ss),g in clean.groupby(['signal_date','session'])}
+    agroups={(d,ss):g for (d,ss),g in anomalies.groupby(['signal_trade_date','session'])}
+    empty=clean.iloc[:0]; eq=anomalies.iloc[:0]
     traded = clean[clean.volume > 0].copy()
     spot_by_date = spot.set_index('date', verify_integrity=True)
     records = []
     for _, ev in events.iterrows():
         day = ev['signal_trade_date']
         nxt = next_spot_day(day, spot_by_date.index)
-        regular = traded[(traded.signal_date == day) & (traded.session == 'regular')]
-        night = traded[(traded.signal_date == day) & (traded.session == 'afterhours')]
+        regular=groups.get((day,'regular'),empty)
+        night=groups.get((day,'afterhours'),empty)
+        rq=agroups.get((day,'regular'),eq)
+        nq=agroups.get((day,'afterhours'),eq)
         night_end = (pd.Timestamp(day) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-        dbar = select_verified_day_close(regular, day, cfg['max_close_staleness_minutes'])
-        nbar = last_bar(night, night_end, '05:00', cfg['max_close_staleness_minutes'])
+        dbar,dfixed,_,_,_=choose_close(regular,rq,day,'regular',cfg)
+        nbar,nfixed,_,_,_=choose_close(night,nq,day,'afterhours',cfg)
         issues = []
         if ev['next_spot_trade_date'] != nxt:
             issues.append('NEXT_SPOT_DATE_MISMATCH')
         valid = ev['data_quality_status'] == 'VALID'
         if valid:
-            if (dbar is not None and verified_expiry_contract(day) ==
+            if (dbar is not None and expiry_contract_for_day(day,cfg) ==
                     str(dbar.contract_month)):
                 issues.append('EXPIRY_CONTRACT_NOT_EXCLUDED')
             if dbar is None or nbar is None or not nxt or day not in spot_by_date.index:
@@ -75,14 +80,12 @@ def audit_events(raw_bars, spot, events, anomalies, cfg):
                 if dbar.contract_month != nbar.contract_month:
                     issues.append('CONTRACT_ROLLOVER_NOT_EXCLUDED')
                 if not (pd.Timestamp(f'{day} 08:45', tz='Asia/Taipei') <= dbar.timestamp
-                        and dbar.timestamp + pd.Timedelta(minutes=1)
-                        <= pd.Timestamp(f'{day} 13:45', tz='Asia/Taipei')):
+                        and dbar.timestamp <= pd.Timestamp(f'{day} 13:45', tz='Asia/Taipei')):
                     issues.append('DAY_CLOSE_OUTSIDE_SESSION')
                 if not (pd.Timestamp(f'{day} 15:00', tz='Asia/Taipei') <= nbar.timestamp
-                        and nbar.timestamp + pd.Timedelta(minutes=1)
-                        <= pd.Timestamp(f'{night_end} 05:00', tz='Asia/Taipei')):
+                        and nbar.timestamp <= pd.Timestamp(f'{night_end} 05:00', tz='Asia/Taipei')):
                     issues.append('NIGHT_CLOSE_OUTSIDE_SESSION')
-                if nbar.timestamp + pd.Timedelta(minutes=1) >= pd.Timestamp(
+                if nbar.timestamp >= pd.Timestamp(
                         f'{nxt} 09:00', tz='Asia/Taipei'):
                     issues.append('PREDICTOR_NOT_AVAILABLE_BEFORE_OPEN')
                 prev = spot_by_date.loc[day]
@@ -97,6 +100,13 @@ def audit_events(raw_bars, spot, events, anomalies, cfg):
                         issues.append(f'{key.upper()}_MISMATCH')
                 expected_returns = compute(dbar.close, nbar.close, prev['close'],
                                            following['open'], following['close'])
+                if dfixed is not None and nfixed is not None and str(dfixed.contract_month)==str(nfixed.contract_month):
+                    fixed=float(nfixed.close)/float(dfixed.close)-1
+                    if not _same(ev.get('txf_overnight_return_fixed'),fixed):
+                        issues.append('FIXED_REFERENCE_RETURN_MISMATCH')
+                    if not _same(ev.get('txf_adaptive_minus_fixed_bp'),
+                                 (expected_returns['txf_overnight_return']-fixed)*10000):
+                        issues.append('ADAPTIVE_FIXED_DIFFERENCE_MISMATCH')
                 for key in PRICE_KEYS:
                     if not _same(ev.get(key), expected_returns[key]):
                         issues.append(f'{key.upper()}_MISMATCH')
@@ -219,7 +229,7 @@ def audit_events(raw_bars, spot, events, anomalies, cfg):
     in_scope_anomalies = len(in_scope)
     if mismatches:
         state = 'BLOCKED'
-    elif details.empty or exclusions or in_scope_anomalies:
+    elif details.empty or exclusions or len(in_scope[in_scope.decision!='INCLUDED_ADAPTIVE_CLOSE']):
         state = 'REVIEW_REQUIRED'
     else:
         state = 'PASS'
@@ -233,53 +243,59 @@ def write_quality_report(run, events, anomalies, raw_bars, spot, cfg, info):
         raw_bars, spot, events, anomalies, cfg)
     # Independent source-marker audit, including the selected verified
     # close and explicit evidence status. Do not silently restore an event.
-    clean, _, _, _ = inspect_bars(raw_bars, cfg['start'], cfg['end'])
-    positive = clean[clean.volume > 0]
-    markers = []
-    for _, event in events.iterrows():
-        day = event.signal_trade_date
-        reg = positive[(positive.signal_date==day)&(positive.session=='regular')]
-        night = positive[(positive.signal_date==day)&(positive.session=='afterhours')]
-        dbar=select_verified_day_close(reg,day,cfg['max_close_staleness_minutes'])
-        nextday=(pd.Timestamp(day)+pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-        nbar=last_bar(night,nextday,'05:00',cfg['max_close_staleness_minutes'])
-        _, _, rows = decide_boundaries(anomalies, day, dbar, nbar, cfg)
-        markers.extend(rows)
-    marker_columns = [
+    # Boundary records remain present in source QA; selected adaptive prices
+    # and original fixed-minute comparator are both reported.
+    clean,_,_,_=inspect_bars(raw_bars,cfg['start'],cfg['end'])
+    cg={(d,s):g for (d,s),g in clean.groupby(['signal_date','session'])}
+    aq={(d,s):g for (d,s),g in anomalies.groupby(['signal_trade_date','session'])}
+    empty=clean.iloc[:0]; eq=anomalies.iloc[:0]
+    marker_rows=[]
+    for _, ev in events.iterrows():
+        day=ev.signal_trade_date
+        for session in ('regular','afterhours'):
+            base=cg.get((day,session),empty)
+            rows=aq.get((day,session),eq)
+            selected,fixed,_,_,rule=choose_close(base,rows,day,session,cfg)
+            for b in rows.itertuples():
+                if b.anomaly_type not in ('UNVERIFIED_REGULAR_1345_BOUNDARY','UNVERIFIED_AFTERHOURS_0500_BOUNDARY'):
+                    continue
+                ref=float(fixed.close) if fixed is not None else np.nan
+                marker_rows.append(dict(
+                    signal_trade_date=day,marker_timestamp=b.timestamp,
+                    session=session,contract_month=b.contract_month,
+                    anomaly_code=b.anomaly_type,marker_open=b.open,
+                    marker_high=b.high,marker_low=b.low,
+                    marker_close=b.close,marker_volume=b.volume,
+                    selected_close_timestamp=(selected.timestamp if selected is not None else pd.NaT),
+                    selected_close=float(selected.close) if selected is not None else np.nan,
+                    fixed_close=ref,price_difference=float(b.close)-ref if np.isfinite(ref) else np.nan,
+                    documentary_evidence='VENDOR_TIMESTAMP_SEMANTICS_NOT_CONFIRMED',
+                    decision=('USED_ADAPTIVE_CLOSE' if rule=='ADAPTIVE_BOUNDARY' else 'NOT_USED')))
+    markers=pd.DataFrame(marker_rows,columns=[
         'signal_trade_date','marker_timestamp','session','contract_month',
         'anomaly_code','marker_open','marker_high','marker_low','marker_close',
-        'marker_volume','selected_close_timestamp','selected_close',
-        'price_difference','documentary_evidence','decision']
-    markers = pd.DataFrame(markers,columns=marker_columns)
-    gaps = missing_minute_intervals(raw_bars,events,cfg)
-    # Rule-based reproduction of the *previous* v0.1.3 classification:
-    # for expiry at 13:30, old policy reported MISSING_OR_STALE_DAY_CLOSE.
-    # Do not imply these are archived v0.1.2 output records.
+        'marker_volume','selected_close_timestamp','selected_close','fixed_close',
+        'price_difference','documentary_evidence','decision'])
+    gaps=missing_minute_intervals(raw_bars,events,cfg)
     versions=[]
-    for _, event in events.iterrows():
-        old = event.data_quality_status
-        old_reason = str(event.exclusion_reason or '')
-        expiry_only = ('EXPIRY_CONTRACT_ROLLOVER_EXCLUSION' in old_reason and
-                       pd.notna(event.get('txf_day_close_timestamp', pd.NaT)))
-        if expiry_only:
+    for _,ev in events.iterrows():
+        old=ev.data_quality_status
+        old_reason=str(ev.exclusion_reason or '')
+        if 'ADAPTIVE_BOUNDARY_INCLUDED' in str(ev.get('boundary_warning_codes','')):
             old='EXCLUDED'
-            old_reason='MISSING_OR_STALE_DAY_CLOSE'
-        if event.get('boundary_warning_codes',''):
-            old='EXCLUDED'
-            old_reason=str(event.get('boundary_warning_codes'))
-        versions.append({
-            'signal_trade_date':event.signal_trade_date,
-            'v012_status_inferred':old,
-            'v012_exclusion_inferred':old_reason,
-            'v013_status':event.data_quality_status,
-            'v013_exclusion':event.exclusion_reason,
-            'classification_changed':old != event.data_quality_status or
-                                      old_reason != event.exclusion_reason,
-            'basis':'INFERRED_FROM_V012_RULES_NOT_ARCHIVED_RUN',
-        })
-    comparison = pd.DataFrame(versions,columns=[
-        'signal_trade_date','v012_status_inferred','v012_exclusion_inferred',
-        'v013_status','v013_exclusion','classification_changed','basis'])
+            old_reason='UNVERIFIED_BOUNDARY_RECORD'
+        versions.append(dict(
+            signal_trade_date=ev.signal_trade_date,
+            v013_status_inferred=old,
+            v013_exclusion_inferred=old_reason,
+            v014_status=ev.data_quality_status,
+            v014_exclusion=ev.exclusion_reason,
+            classification_changed=(old!=ev.data_quality_status or
+                                    old_reason!=ev.exclusion_reason),
+            basis='INFERRED_FROM_V013_RULES_NOT_ARCHIVED_RUN'))
+    comparison=pd.DataFrame(versions,columns=[
+        'signal_trade_date','v013_status_inferred','v013_exclusion_inferred',
+        'v014_status','v014_exclusion','classification_changed','basis'])
     tables = {'event_price_audit': details, 'daily_coverage': daily,
               'monthly_qa': monthly, 'exclusion_reasons': reasons,
               'boundary_audit': markers, 'missing_minute_intervals': gaps,
@@ -300,7 +316,7 @@ def write_quality_report(run, events, anomalies, raw_bars, spot, cfg, info):
     valid = int((events.data_quality_status == 'VALID').sum()) if len(events) else 0
     failures = int((details.audit_status == 'MISMATCH').sum())
     report = (
-        '# TXF Overnight → 0050 Data Quality Audit v0.1.2\n\n'
+        '# TXF Overnight → 0050 Data Quality Audit v0.1.4\n\n'
         f"Data label: {info['data_label']}\n\n"
         f"Mode: {cfg['mode']}\n\n"
         f"Configured window: {cfg['start']} to {cfg['end']}\n\n"
@@ -315,13 +331,13 @@ def write_quality_report(run, events, anomalies, raw_bars, spot, cfg, info):
         'Expected regular minute count: 300 normally; 285 for the verified '
         'expiring contract on its last trading day, which has no afterhours. '
         'Missing timestamps are not proof of vendor data loss. '
-        'Boundary marker interpretation remains unverified without independent '
-        'documentation and zero-volume flat marker checks.\n\n'
+        'Adaptive Close is predeclared research convention; vendor semantics remain unverified. '
+        '\n\n'
         '**No H1/H2/H3 inference, HAC, FDR, OOS, p-values or trading conclusions '
         'are produced in validation mode.**\n\n'
         'Detailed rows: tables/event_price_audit.csv, daily_coverage.csv, '
         'monthly_qa.csv, exclusion_reasons.csv, boundary_audit.csv, '
-        'missing_minute_intervals.csv, classification_comparison.csv; '
+        'missing_minute_intervals.csv, classification_comparison.csv (inferred v0.1.3 rules); '
         'diagnostics/session_anomalies.csv; raw_manifest/manifest.json.\n'
     )
     (run / 'reports' / 'data_quality_audit.md').write_text(report, encoding='utf-8')

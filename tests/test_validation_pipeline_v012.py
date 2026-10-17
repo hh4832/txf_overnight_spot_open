@@ -92,7 +92,7 @@ def test_validation_requires_review_for_out_of_scope_anomaly(tmp_path,monkeypatc
             base=pd.concat([base,pd.DataFrame([extra])],ignore_index=True)
         return base
     monkeypatch.setattr(fubon,'fetch',response)
-    folder=pipeline.run(cfg,tmp_path,rest=object())
+    folder=pipeline.run({**cfg,'close_policy':'strict'},tmp_path,rest=object())
     info=json.loads((folder/'run_info.json').read_text())
     assert info['status']=='DATA_QUALITY_REVIEW_REQUIRED'
     assert info['n_excluded']>=1

@@ -70,6 +70,7 @@ def test_boundary_in_scope_requires_review():
     b = bars.iloc[0].copy()
     b['timestamp'] = pd.Timestamp(cfg['start']+' 13:45', tz='Asia/Taipei')
     bars = pd.concat([bars, pd.DataFrame([b])], ignore_index=True)
+    cfg = {**cfg, 'close_policy':'strict'}
     events, qa = build(bars, spot, cfg, return_diagnostics=True)
     _, daily, _, _, status = audit_events(bars, spot, events, qa, cfg)
     assert status == 'REVIEW_REQUIRED'

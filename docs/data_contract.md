@@ -98,3 +98,58 @@ rule INFERRED_FROM_V012_RULES_NOT_ARCHIVED_RUN; it is not the saved v0.1.2 outpu
 Nominal minute counts are 285 for verified expiring contracts' regular
 session and 300 for other regular sessions, 840 for afterhours; nonobserved
 labels are not proof of missing transactions. Never fill prices.
+
+## v0.1.4 — Phase C personal trading reference
+
+**Objective:** summarize how TXF overnight changes historically correspond to
+0050 next adjusted open-to-prior-close gap and next-open-to-close intraday
+return. This is a personal information reference, **NOT** an execution signal,
+trade backtest, estimated profitability, or predictive paper.
+
+Price sourcing is unchanged for 0050: FinLab `etl:adj_open` and
+`etl:adj_close`; raw price is used only to audit adjusted-price alignment.
+
+TXF primary predictor uses a *predeclared adaptive close convention*:
+use a valid positive-volume 13:45 regular bar, otherwise the exact 13:44
+bar; use a valid 05:00 afterhours bar, otherwise the exact 04:59 bar
+on the following calendar day. If an extra bar is malformed or conflicts
+with the selected base-bar contract month, **exclude**, do not fall back.
+Missing exact close is excluded (no 5-minute stale substitute).
+This is a research convention and is not presented as independent
+proof of Fubon's minute label semantics. Keep `close_policy: strict` to
+reproduce prior quarantine handling. Fixed-price comparisons are descriptive
+only, with no significance tests.
+
+Contract months must match at both selected closes. Scheduled third
+Wednesday TXF expiry is recognized from 2018 onward, including dates beyond
+the three explicitly checked in 2026. **Other scheduled dates are not
+independently verified official dates.** Review unusual holidays and supply
+`expiry_date_overrides` keyed by YYYYMM when the exchange reschedules a
+settlement. Contract mismatch always excludes regardless of calendar.
+
+### Phase C run in Google Colab
+
+Open `notebooks/run_txf_overnight_spot_open.ipynb`. Select a deliberate
+real historical start/end range, use `MODE='full'`, `CONFIRM_FULL=True`,
+`CLOSE_POLICY='adaptive'`. The previously verified Google Drive target
+and encrypted secrets are unchanged. Fubon is fetched in 7-day partitions
+and partition checksums are preserved for cache hits and retries. Long
+histories require time and may hit vendor-history limits; provider failure is
+fatal, not substituted with synthetic data. Do not schedule unapproved
+historical full downloads.
+
+Primary outputs in `tables/`: `trading_reference.csv` (six **predeclared**
+night-move buckets; n, gap mean/median, positive/negative probability,
+intraday mean/median and direction probabilities),
+`trading_reference_by_year.csv`, `trading_reference_holdout.csv` (only
+when >252 valid earlier observations exist),
+`close_policy_comparison.csv`. `reports/summary.md` introduces these
+results before the existing H1/H2 diagnostics. Bin-specific sample size
+below ten is `SMALL_SAMPLE`; OOS with inadequate history is clearly
+`NOT_EVALUATED_INSUFFICIENT_HISTORY`. Prior HAC and expanding OOS remain
+available but are not claimed to demonstrate real-world trading value.
+
+`validation` is restricted to QA with **no regression/OOS**. Raw anomalies
+remain in diagnostics, including adaptive boundary prices actually chosen.
+No look-ahead, synthetic fallback, cross-contract return, credential commit,
+minute-forward-fill or rewriting of previous run outputs is allowed.

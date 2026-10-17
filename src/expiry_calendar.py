@@ -55,3 +55,37 @@ def select_verified_day_close(regular, day, tolerance):
                 day, candidate.contract_month):
             return candidate
     return None
+
+
+def expiry_contract_for_day(day, cfg=None):
+    """Monthly expiry candidate; reviewed exceptions override third Wednesday.
+
+    The fallback is a *scheduled* date, not proof of exchange settlement.
+    A contract mismatch is always excluded independently from this calendar.
+    Configured exceptions map YYYYMM to exchange-confirmed YYYY-MM-DD.
+    """
+    cfg=cfg or {}
+    for month, date_ in dict(cfg.get('expiry_date_overrides') or {}).items():
+        if date_ == str(day):
+            return str(month)
+    confirmed=verified_expiry_contract(day)
+    if confirmed:
+        return confirmed
+    dt=pd.Timestamp(day)
+    if dt.year < 2018 or dt.year > 2100:
+        return None
+    month=dt.strftime('%Y%m')
+    if month in (cfg.get('expiry_date_overrides') or {}):
+        return None
+    return month if scheduled_monthly_expiry(month)==str(day) else None
+
+
+def calendar_confidence(day,cfg=None):
+    month=expiry_contract_for_day(day,cfg)
+    if month is None:
+        return 'NOT_EXPIRY_CANDIDATE'
+    if month in (cfg or {}).get('expiry_date_overrides', {}):
+        return 'EXCHANGE_REVIEWED_OVERRIDE'
+    if month in VERIFIED_2026:
+        return 'VERIFIED_2026_DATE'
+    return 'SCHEDULED_THIRD_WEDNESDAY_UNVERIFIED'

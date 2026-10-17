@@ -75,6 +75,7 @@ def test_expiring_contract_1330_then_next_month_night_is_excluded():
 def test_unverified_flat_boundary_stays_excluded():
     bars,spot,cfg=fixture()
     bars=add_marker(bars,cfg['start'])
+    cfg={**cfg,'close_policy':'strict'}
     events,qa=build(bars,spot,cfg,return_diagnostics=True)
     assert 'UNVERIFIED_REGULAR_1345_BOUNDARY' in events.iloc[0].exclusion_reason
     assert events.iloc[0].data_quality_status=='EXCLUDED'
@@ -89,15 +90,15 @@ def test_approved_flat_boundary_can_be_retained_with_warning():
     e=events.iloc[0]
     assert e.data_quality_status=='VALID'
     assert e.exclusion_reason==''
-    assert 'UNVERIFIED_REGULAR_1345_BOUNDARY' in e.boundary_warning_codes
+    assert 'ZERO_VOLUME_BOUNDARY_IGNORED' in e.boundary_warning_codes
     details,daily,monthly,reason,status=audit_events(bars,spot,events,qa,cfg)
-    assert status=='REVIEW_REQUIRED'  # Any in-range source marker still requires review
+    assert status=='REVIEW_REQUIRED'  # Zero-volume boundary remains a QA anomaly
     assert details.iloc[0].audit_status=='PASS'
     assert monthly.iloc[0].boundary_warning_events==1
 
 def test_verified_evidence_cannot_override_trade_or_price_conflict():
     bars,spot,cfg=fixture()
-    cfg={**cfg,'boundary_semantics_verified':True,
+    cfg={**cfg,'close_policy':'strict','boundary_semantics_verified':True,
          'boundary_evidence_reference':'https://example.com/reviewed-provider-document'}
     for volume,price in [(1,None),(0,999)]:
         data=add_marker(bars,cfg['start'],volume=volume,price=price)
@@ -107,7 +108,7 @@ def test_verified_evidence_cannot_override_trade_or_price_conflict():
 def test_night_0500_unverified_and_verified():
     bars,spot,cfg=fixture()
     data=add_marker(bars,cfg['start'],which='night')
-    ev,_=build(data,spot,cfg,return_diagnostics=True)
+    ev,_=build(data,spot,{**cfg,'close_policy':'strict'},return_diagnostics=True)
     assert 'UNVERIFIED_AFTERHOURS_0500_BOUNDARY' in ev.iloc[0].exclusion_reason
     cfg={**cfg,'boundary_semantics_verified':True,
          'boundary_evidence_reference':'https://example.com/reviewed-provider-document'}
@@ -141,4 +142,4 @@ def test_audit_writes_new_outputs(tmp_path):
         assert (tmp_path/'tables'/f'{name}.csv').exists()
     assert 'missing_minute_intervals' in tables
     assert (tables['classification_comparison']['basis']
-            =='INFERRED_FROM_V012_RULES_NOT_ARCHIVED_RUN').all()
+            =='INFERRED_FROM_V013_RULES_NOT_ARCHIVED_RUN').all()

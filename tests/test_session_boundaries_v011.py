@@ -36,7 +36,7 @@ def test_outside_range_anomaly_does_not_block_pilot():
 def test_inside_range_anomaly_excludes_event():
     bars,spot=generate();first=spot.date.iloc[0]
     bars=pd.concat([bars,pd.DataFrame([bar(first+' 13:45')])],ignore_index=True)
-    ev,qa=build(bars,spot,{**load(),'start':first,'end':first},return_diagnostics=True)
+    ev,qa=build(bars,spot,{**load(close_policy='strict'),'start':first,'end':first},return_diagnostics=True)
     assert ev.iloc[0].data_quality_status=='EXCLUDED'
     assert 'UNVERIFIED_REGULAR_1345_BOUNDARY' in ev.iloc[0].exclusion_reason
     assert qa.iloc[0].affects_research_event

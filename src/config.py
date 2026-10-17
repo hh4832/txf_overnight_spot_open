@@ -21,6 +21,14 @@ def load(path='configs/research.yaml', **overrides):
         evidence = str(cfg.get('boundary_evidence_reference', '')).strip()
         if not (evidence.startswith('https://') and len(evidence) > 16):
             raise ValueError('Boundary marker verification requires reviewed HTTPS evidence')
+    if cfg.get('close_policy','adaptive') not in ('adaptive','strict'):
+        raise ValueError('close_policy must be adaptive or strict')
+    overrides=cfg.get('expiry_date_overrides') or {}
+    if not isinstance(overrides,dict) or any(
+            len(str(m))!=6 or not str(m).isdigit() or
+            pd.isna(pd.to_datetime(v,errors='coerce'))
+            for m,v in overrides.items()):
+        raise ValueError('Invalid expiry date overrides')
     if cfg['request_spacing_seconds'] < 0:
         raise ValueError('Invalid rate limit')
     return cfg

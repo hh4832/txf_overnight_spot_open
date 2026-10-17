@@ -7,7 +7,7 @@ expiring month's contract; other months retain the normal 300-minute clock.
 import pandas as pd
 
 from .data_validation import inspect_bars
-from .expiry_calendar import expected_regular_bars, verified_expiry_contract
+from .expiry_calendar import expiry_contract_for_day
 
 COLUMNS = [
     'signal_trade_date','session','expected_contract_context',
@@ -35,7 +35,7 @@ def missing_minute_intervals(raw_bars, events, cfg):
         for session in ('regular','afterhours'):
             frame=clean[(clean.signal_date==day)&(clean.session==session)]
             months=sorted(set(frame.contract_month.astype(str)))
-            expiry=verified_expiry_contract(day)
+            expiry=expiry_contract_for_day(day,cfg)
             expiring_only=(session=='regular' and expiry and months==[expiry])
             expected=285 if expiring_only else (300 if session=='regular' else 840)
             context=('EXPIRING_CONTRACT_1330' if expiring_only

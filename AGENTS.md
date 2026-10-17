@@ -38,3 +38,13 @@ volume, identical OHLC/selected close, same contract and reviewed evidence.
 Keep provider anomalies and warning history even for retained events.
 Missing minute intervals are unobserved timestamps, not proven API loss;
 do not fill. v0.1.2 status comparisons are inferred, not archived runs.
+
+v0.1.4: This repo is a PERSONAL trading-reference tool, not a paper. Use
+FinLab adjusted 0050 prices; TXF adaptive exact 13:45/13:44 and next-day
+05:00/04:59. Preserve strict same-month checks, no missing minute fill,
+raw boundary audit, annual stratification, and a chronological 252+ prior
+observation holdout; do not optimize the six fixed bins. Treat third-Wed
+outside reviewed 2026 dates as SCHEDULED_UNVERIFIED; provide reviewed expiry
+overrides for exchange-shifted days. Report sample insufficiency and never
+label historical frequencies as signals or trading profit. Full multi-year
+runs require explicit confirm_full and real credentials.
